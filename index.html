@@ -34,6 +34,24 @@
       const treeCtx = treeCanvas.getContext("2d");
       const MAX_DEVICE_PIXEL_RATIO = 2;
       const GROUND_SAMPLE_SPACING = 8;
+      const WIND_BASE = 14;
+      const WIND_SWAY = 22;
+      const WIND_RIPPLE = 11;
+      const WIND_SHEAR = 10;
+      const PETAL_SHADE_PALETTES = [
+        {
+          sprite: { top: "#fffdf9", mid: "#ffe8ef", bottom: "#f8c9d8", glow: "rgba(255,255,255,0.7)" },
+          cluster: { top: "rgba(255,253,249,0.98)", bottom: "rgba(248,201,216,0.95)" }
+        },
+        {
+          sprite: { top: "#fff6fb", mid: "#ffc9dc", bottom: "#ef97b8", glow: "rgba(255,230,241,0.68)" },
+          cluster: { top: "rgba(255,246,251,0.98)", bottom: "rgba(239,151,184,0.95)" }
+        },
+        {
+          sprite: { top: "#fff1f7", mid: "#f6aecb", bottom: "#d9749f", glow: "rgba(255,214,232,0.64)" },
+          cluster: { top: "rgba(255,241,247,0.97)", bottom: "rgba(217,116,159,0.93)" }
+        }
+      ];
 
       let width = 0;
       let height = 0;
@@ -177,21 +195,15 @@
       }
 
       function createPetalSprites() {
-        const palettes = [
-          { top: "#fffdfd", mid: "#ffe4ee", bottom: "#f4c3d2", glow: "rgba(255,255,255,0.68)" },
-          { top: "#fff8fb", mid: "#ffd8e8", bottom: "#efb2ca", glow: "rgba(255,240,247,0.64)" },
-          { top: "#fffaf7", mid: "#ffe9f2", bottom: "#f7ccda", glow: "rgba(255,248,252,0.72)" },
-          { top: "#fffef6", mid: "#fff1f7", bottom: "#f1bfd4", glow: "rgba(255,255,255,0.7)" }
-        ];
-
-        return palettes.map((palette, index) => {
+        return PETAL_SHADE_PALETTES.map((paletteSet, index) => {
+          const palette = paletteSet.sprite;
           const sprite = document.createElement("canvas");
           sprite.width = 64;
           sprite.height = 64;
           const spriteCtx = sprite.getContext("2d");
 
           spriteCtx.translate(32, 32);
-          spriteCtx.rotate((index - 1.5) * 0.08);
+          spriteCtx.rotate((index - 1) * 0.08);
           spriteCtx.shadowColor = palette.glow;
           spriteCtx.shadowBlur = 10;
 
@@ -571,15 +583,16 @@
           const py = Math.sin(angle) * distance * 0.75;
           const size = seededBetween(rng, 3.5, 7.2);
           const rotation = seededBetween(rng, -Math.PI, Math.PI);
-          const pale = rng() < 0.38;
+          const shade = PETAL_SHADE_PALETTES[(rng() * PETAL_SHADE_PALETTES.length) | 0].cluster;
+          const highlight = rng() < 0.22;
 
           targetCtx.save();
           targetCtx.translate(px, py);
           targetCtx.rotate(rotation);
 
           const petalGradient = targetCtx.createLinearGradient(0, -size, 0, size);
-          petalGradient.addColorStop(0, pale ? "rgba(255,255,250,0.98)" : "rgba(255,244,248,0.96)");
-          petalGradient.addColorStop(1, pale ? "rgba(249,208,223,0.95)" : "rgba(246,191,212,0.94)");
+          petalGradient.addColorStop(0, highlight ? "rgba(255,255,250,0.98)" : shade.top);
+          petalGradient.addColorStop(1, highlight ? "rgba(250,216,227,0.95)" : shade.bottom);
           targetCtx.fillStyle = petalGradient;
 
           targetCtx.beginPath();
@@ -978,12 +991,12 @@
           radius,
           radiusSquared: radius * radius,
           invRadius: 1 / radius,
-          strength: randomBetween(82, 148),
+          strength: randomBetween(94, 162),
           spin: Math.random() < 0.5 ? -1 : 1,
           age: 0,
           duration: randomBetween(4.2, 6.8),
-          driftX: randomBetween(-8, 18),
-          driftY: randomBetween(-3, 7),
+          driftX: randomBetween(6, 24),
+          driftY: randomBetween(-2, 6),
           upLift: randomBetween(18, 44)
         });
 
@@ -1016,7 +1029,10 @@
       }
 
       function updatePetals(dt, time) {
-        const globalWind = Math.sin(time * 0.17) * 18 + Math.sin(time * 0.43 + 1.1) * 9 + 6;
+        const globalWind =
+          Math.sin(time * 0.15) * WIND_SWAY +
+          Math.sin(time * 0.37 + 1.1) * WIND_RIPPLE +
+          WIND_BASE;
         const curveTime = time * 0.55;
         const petalCount = petals.length;
         const gustCount = gusts.length;
@@ -1029,8 +1045,9 @@
             globalWind +
             Math.sin(time * petal.swaySpeed + petal.phase) * petal.swayAmp +
             Math.sin(curveTime + petal.phase * 0.7) * petal.curveAmp * 0.35;
+          const windShear = (1 - clamp(petal.y / Math.max(height, 1), 0, 1)) * WIND_SHEAR;
 
-          petal.vx += (ambient + petal.driftBias - petal.vx) * 0.48 * dt;
+          petal.vx += (ambient + windShear + petal.driftBias - petal.vx) * 0.48 * dt;
           petal.vy = Math.min(petal.terminal, petal.vy + petal.gravity * dt);
 
           let gustInfluence = 0;
