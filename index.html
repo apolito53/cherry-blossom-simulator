@@ -32,6 +32,8 @@
       const backgroundCtx = backgroundCanvas.getContext("2d");
       const treeCanvas = document.createElement("canvas");
       const treeCtx = treeCanvas.getContext("2d");
+      const MAX_DEVICE_PIXEL_RATIO = 2;
+      const GROUND_SAMPLE_SPACING = 8;
 
       let width = 0;
       let height = 0;
@@ -46,7 +48,12 @@
       let groundPetals = [];
       let gusts = [];
       let petalSprites = [];
+      let petalLayers = [[], []];
+      let groundSamples = [];
+      let groundSampleSpacing = GROUND_SAMPLE_SPACING;
+      let groundMistGradient = null;
       let nextGustAt = 0;
+      let resizeFrame = 0;
       const pointer = {
         x: 0,
         y: 0,
@@ -62,6 +69,21 @@
         energy: 0,
         press: 0,
         liftCarry: 0
+      };
+      const pointerField = {
+        active: false,
+        radius: 0,
+        radiusSquared: 0,
+        motionFactor: 0,
+        hoverStrength: 0,
+        pressStrength: 0,
+        orbital: 0,
+        push: 0,
+        lift: 0,
+        driftX: 0,
+        driftY: 0,
+        spinDirection: 1,
+        pulseTime: 0
       };
 
       function clamp(value, min, max) {
@@ -97,11 +119,61 @@
         targetCtx.imageSmoothingEnabled = true;
       }
 
-      function groundYAt(x) {
-        const mound = Math.exp(-Math.pow((x - treeBaseX) / (width * 0.26), 2)) * height * 0.04;
-        const drift = Math.exp(-Math.pow((x - width * 0.72) / (width * 0.2), 2)) * height * 0.015;
-        const wave = Math.sin((x / Math.max(width, 1)) * Math.PI * 1.25 + 0.45) * height * 0.01;
+      function calculateGroundYAt(x) {
+        const safeWidth = Math.max(width, 1);
+        const moundOffset = (x - treeBaseX) / (safeWidth * 0.26);
+        const driftOffset = (x - safeWidth * 0.72) / (safeWidth * 0.2);
+        const mound = Math.exp(-(moundOffset * moundOffset)) * height * 0.04;
+        const drift = Math.exp(-(driftOffset * driftOffset)) * height * 0.015;
+        const wave = Math.sin((x / safeWidth) * Math.PI * 1.25 + 0.45) * height * 0.01;
         return height * 0.855 - mound - drift + wave;
+      }
+
+      function rebuildGroundCache() {
+        groundSampleSpacing = GROUND_SAMPLE_SPACING;
+        const sampleCount = Math.max(2, Math.ceil(width / groundSampleSpacing) + 2);
+        groundSamples = new Array(sampleCount);
+
+        for (let i = 0; i < sampleCount; i += 1) {
+          groundSamples[i] = calculateGroundYAt(Math.min(width, i * groundSampleSpacing));
+        }
+      }
+
+      function groundYAt(x) {
+        if (groundSamples.length < 2) {
+          return calculateGroundYAt(x);
+        }
+
+        const clampedX = clamp(x, 0, width);
+        const index = Math.min(groundSamples.length - 2, Math.floor(clampedX / groundSampleSpacing));
+        const t = (clampedX - index * groundSampleSpacing) / groundSampleSpacing;
+        return lerp(groundSamples[index], groundSamples[index + 1], t);
+      }
+
+      function setPetalLayer(petal, layer) {
+        if (petal.layer === layer) {
+          return;
+        }
+
+        if (petal.layer === 0 || petal.layer === 1) {
+          const previousLayer = petalLayers[petal.layer];
+          const previousIndex = previousLayer[petal.layerIndex] === petal ?
+            petal.layerIndex :
+            previousLayer.indexOf(petal);
+
+          if (previousIndex !== -1) {
+            const movedPetal = previousLayer.pop();
+            if (previousIndex < previousLayer.length) {
+              previousLayer[previousIndex] = movedPetal;
+              movedPetal.layerIndex = previousIndex;
+            }
+          }
+        }
+
+        const targetLayer = petalLayers[layer];
+        petal.layer = layer;
+        petal.layerIndex = targetLayer.length;
+        targetLayer.push(petal);
       }
 
       function createPetalSprites() {
@@ -530,7 +602,6 @@
 
         const seed = ((width * 73856093) ^ (height * 19349663) ^ 0x9e3779b9) >>> 0;
         const rng = mulberry32(seed);
-        treeBaseX = width < 700 ? width * 0.42 : width * 0.34;
         const baseY = groundYAt(treeBaseX) + height * 0.012;
         const trunkLength = height * (width < 700 ? 0.18 : 0.2);
 
@@ -659,7 +730,7 @@
         petal.alpha = randomBetween(0.55, 0.92);
         petal.phase = randomBetween(0, Math.PI * 2);
         petal.sprite = (Math.random() * petalSprites.length) | 0;
-        petal.layer = Math.random() < 0.44 ? 0 : 1;
+        setPetalLayer(petal, Math.random() < 0.44 ? 0 : 1);
         petal.driftBias = randomBetween(-4, 9);
         petal.flutter = randomBetween(2.4, 5.8);
       }
@@ -667,6 +738,7 @@
       function rebuildParticles() {
         const targetCount = Math.min(2600, Math.max(1500, Math.floor((width * height) / 850)));
         petals = new Array(targetCount);
+        petalLayers = [[], []];
 
         for (let i = 0; i < targetCount; i += 1) {
           const petal = {};
@@ -755,43 +827,69 @@
         }
       }
 
-      function applyPointerForce(petal, dt, time) {
+      function preparePointerField(time) {
         const fieldStrength = pointer.energy * 0.7 + pointer.press * 0.9;
         if (!pointer.initialized || fieldStrength < 0.01) {
+          pointerField.active = false;
+          return;
+        }
+
+        const minDimension = Math.min(width, height);
+        const pressStrength = pointer.press;
+        const hoverStrength = pointer.energy * (1 - pressStrength * 0.55);
+        const radius = lerp(minDimension * 0.08, minDimension * 0.19, pressStrength);
+
+        pointerField.active = true;
+        pointerField.radius = radius;
+        pointerField.radiusSquared = radius * radius;
+        pointerField.motionFactor = clamp(Math.hypot(pointer.vx, pointer.vy) / 380, 0, 1);
+        pointerField.hoverStrength = hoverStrength;
+        pointerField.pressStrength = pressStrength;
+        pointerField.orbital = hoverStrength * 30 + pressStrength * 56;
+        pointerField.push = hoverStrength * 8 + pressStrength * 46;
+        pointerField.lift = hoverStrength * 10 + pressStrength * 28;
+        pointerField.driftX = pointer.vx * (0.016 + pressStrength * 0.018);
+        pointerField.driftY = pointer.vy * (0.01 + pressStrength * 0.012);
+        pointerField.spinDirection = pointer.vx < -16 ? -1 : 1;
+        pointerField.pulseTime = time * 2.2;
+      }
+
+      function applyPointerForce(petal, dt) {
+        if (!pointerField.active) {
           return 0;
         }
 
-        const radius = lerp(Math.min(width, height) * 0.08, Math.min(width, height) * 0.19, pointer.press);
         const dx = petal.x - pointer.x;
         const dy = petal.y - pointer.y;
         const distanceSquared = dx * dx + dy * dy;
 
-        if (distanceSquared >= radius * radius) {
+        if (distanceSquared >= pointerField.radiusSquared) {
           return 0;
         }
 
         const distance = Math.sqrt(distanceSquared) + 0.001;
         const nx = dx / distance;
         const ny = dy / distance;
-        const spinDirection = pointer.vx < -16 ? -1 : 1;
-        const tx = -ny * spinDirection;
-        const ty = nx * spinDirection;
-        const falloff = Math.pow(1 - distance / radius, 2);
-        const motionFactor = clamp(Math.hypot(pointer.vx, pointer.vy) / 380, 0, 1);
-        const hoverStrength = pointer.energy * (1 - pointer.press * 0.55);
-        const pressStrength = pointer.press;
-        const orbital = hoverStrength * 30 + pressStrength * 56;
-        const push = hoverStrength * 8 + pressStrength * 46;
-        const lift = hoverStrength * 10 + pressStrength * 28;
-        const driftX = pointer.vx * (0.016 + pressStrength * 0.018);
-        const driftY = pointer.vy * (0.01 + pressStrength * 0.012);
-        const pulse = 1 + Math.sin(time * 2.2 + petal.phase) * 0.08;
+        const tx = -ny * pointerField.spinDirection;
+        const ty = nx * pointerField.spinDirection;
+        const distanceRatio = 1 - distance / pointerField.radius;
+        const falloff = distanceRatio * distanceRatio;
+        const pulse = 1 + Math.sin(pointerField.pulseTime + petal.phase) * 0.08;
 
-        petal.vx += (tx * orbital + nx * push + driftX * (0.45 + motionFactor * 0.55)) * falloff * pulse * dt;
-        petal.vy += (ty * orbital + ny * push + driftY * (0.35 + motionFactor * 0.5) - lift) * falloff * pulse * dt;
-        petal.angle += (hoverStrength * 0.6 + pressStrength * 1.8) * falloff * dt;
+        petal.vx += (
+          tx * pointerField.orbital +
+          nx * pointerField.push +
+          pointerField.driftX * (0.45 + pointerField.motionFactor * 0.55)
+        ) * falloff * pulse * dt;
+        petal.vy += (
+          ty * pointerField.orbital +
+          ny * pointerField.push +
+          pointerField.driftY * (0.35 + pointerField.motionFactor * 0.5) -
+          pointerField.lift
+        ) * falloff * pulse * dt;
+        petal.angle += (pointerField.hoverStrength * 0.6 + pointerField.pressStrength * 1.8) * falloff * dt;
 
-        return falloff * (0.45 + pressStrength * 0.55);
+        return falloff * (0.45 + pointerField.pressStrength * 0.55);
       }
 
       function launchGroundPetal(groundPetal) {
@@ -829,7 +927,7 @@
         petal.alpha = clamp(groundPetal.alpha + randomBetween(0.08, 0.24), 0.56, 0.95);
         petal.phase = randomBetween(0, Math.PI * 2);
         petal.sprite = groundPetal.sprite;
-        petal.layer = Math.random() < 0.52 ? 1 : 0;
+        setPetalLayer(petal, Math.random() < 0.52 ? 1 : 0);
         petal.gravity = randomBetween(18, 38);
         petal.terminal = randomBetween(42, 90);
         petal.swayAmp = randomBetween(6, 24);
@@ -872,10 +970,14 @@
       }
 
       function spawnGust() {
+        const radius = randomBetween(100, 190);
+
         gusts.push({
           x: randomBetween(width * 0.28, width * 0.82),
           y: randomBetween(height * 0.14, height * 0.62),
-          radius: randomBetween(100, 190),
+          radius,
+          radiusSquared: radius * radius,
+          invRadius: 1 / radius,
           strength: randomBetween(82, 148),
           spin: Math.random() < 0.5 ? -1 : 1,
           age: 0,
@@ -915,25 +1017,33 @@
 
       function updatePetals(dt, time) {
         const globalWind = Math.sin(time * 0.17) * 18 + Math.sin(time * 0.43 + 1.1) * 9 + 6;
+        const curveTime = time * 0.55;
+        const petalCount = petals.length;
+        const gustCount = gusts.length;
 
-        for (const petal of petals) {
+        preparePointerField(time);
+
+        for (let i = 0; i < petalCount; i += 1) {
+          const petal = petals[i];
           const ambient =
             globalWind +
             Math.sin(time * petal.swaySpeed + petal.phase) * petal.swayAmp +
-            Math.sin(time * 0.55 + petal.phase * 0.7) * petal.curveAmp * 0.35;
+            Math.sin(curveTime + petal.phase * 0.7) * petal.curveAmp * 0.35;
 
           petal.vx += (ambient + petal.driftBias - petal.vx) * 0.48 * dt;
           petal.vy = Math.min(petal.terminal, petal.vy + petal.gravity * dt);
 
           let gustInfluence = 0;
-          for (const gust of gusts) {
+          for (let j = 0; j < gustCount; j += 1) {
+            const gust = gusts[j];
             const dx = petal.x - gust.x;
             const dy = petal.y - gust.y;
             const distanceSquared = dx * dx + dy * dy;
 
-            if (distanceSquared < gust.radius * gust.radius) {
+            if (distanceSquared < gust.radiusSquared) {
               const distance = Math.sqrt(distanceSquared) + 0.001;
-              const influence = Math.pow(1 - distance / gust.radius, 2);
+              const influenceBase = 1 - distance * gust.invRadius;
+              const influence = influenceBase * influenceBase;
               const swirl = gust.spin * gust.strength * influence;
 
               petal.vx += (-dy / distance * swirl + gust.driftX * 0.4 * influence) * dt;
@@ -943,7 +1053,7 @@
             }
           }
 
-          gustInfluence += applyPointerForce(petal, dt, time);
+          gustInfluence += applyPointerForce(petal, dt);
 
           petal.vy = Math.max(petal.vy, -32);
 
@@ -968,12 +1078,10 @@
       function drawPetalLayer(layer, time) {
         const depthScale = layer === 0 ? 0.92 : 1.04;
         const depthAlpha = layer === 0 ? 0.72 : 1;
+        const layerPetals = petalLayers[layer];
 
-        for (const petal of petals) {
-          if (petal.layer !== layer) {
-            continue;
-          }
-
+        for (let i = 0; i < layerPetals.length; i += 1) {
+          const petal = layerPetals[i];
           const flutter = 1 + Math.sin(time * petal.flutter + petal.phase) * 0.1;
           const scaleX = petal.size * petal.aspect * flutter * depthScale;
           const scaleY = petal.size * (1.02 - flutter * 0.08) * depthScale;
@@ -996,15 +1104,19 @@
         ctx.globalAlpha = 1;
       }
 
+      function rebuildGroundMistGradient() {
+        groundMistGradient = ctx.createLinearGradient(0, height * 0.77, 0, height);
+        groundMistGradient.addColorStop(0, "rgba(255,247,251,0)");
+        groundMistGradient.addColorStop(0.45, "rgba(255,245,249,0.1)");
+        groundMistGradient.addColorStop(1, "rgba(244,233,242,0.24)");
+      }
+
       function drawGroundPetals(time) {
-        const groundMist = ctx.createLinearGradient(0, height * 0.77, 0, height);
-        groundMist.addColorStop(0, "rgba(255,247,251,0)");
-        groundMist.addColorStop(0.45, "rgba(255,245,249,0.1)");
-        groundMist.addColorStop(1, "rgba(244,233,242,0.24)");
-        ctx.fillStyle = groundMist;
+        ctx.fillStyle = groundMistGradient;
         ctx.fillRect(0, height * 0.77, width, height * 0.23);
 
-        for (const petal of groundPetals) {
+        for (let i = 0; i < groundPetals.length; i += 1) {
+          const petal = groundPetals[i];
           const shimmer = Math.sin(time * 0.35 + petal.phase) * 0.28;
           const angle = petal.angle + Math.sin(time * 0.22 + petal.phase) * 0.015;
           const scaleX = petal.size * petal.aspect;
@@ -1030,7 +1142,6 @@
 
       function render(time) {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, width, height);
         ctx.drawImage(backgroundCanvas, 0, 0, width, height);
         drawPetalLayer(0, time);
         ctx.drawImage(treeCanvas, 0, 0, width, height);
@@ -1041,10 +1152,11 @@
       function resize() {
         width = window.innerWidth;
         height = window.innerHeight;
-        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        dpr = Math.min(window.devicePixelRatio || 1, MAX_DEVICE_PIXEL_RATIO);
         lastTime = 0;
         sceneTime = 0;
         treeBaseX = width < 700 ? width * 0.42 : width * 0.34;
+        rebuildGroundCache();
         pointer.targetX = clamp(pointer.targetX, 0, width);
         pointer.targetY = clamp(pointer.targetY, 0, height);
         pointer.x = clamp(pointer.x, 0, width);
@@ -1056,11 +1168,22 @@
         pointer.liftCarry = 0;
 
         setupLayer(canvas, ctx);
-        petalSprites = createPetalSprites();
+        rebuildGroundMistGradient();
         buildBackground();
         buildTree();
         rebuildParticles();
         warmupScene();
+      }
+
+      function requestResize() {
+        if (resizeFrame) {
+          return;
+        }
+
+        resizeFrame = requestAnimationFrame(() => {
+          resizeFrame = 0;
+          resize();
+        });
       }
 
       function frame(now) {
@@ -1124,7 +1247,8 @@
         }
       });
 
-      window.addEventListener("resize", resize, { passive: true });
+      window.addEventListener("resize", requestResize, { passive: true });
+      petalSprites = createPetalSprites();
       resize();
       requestAnimationFrame(frame);
     })();
