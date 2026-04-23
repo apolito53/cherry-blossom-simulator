@@ -1,0 +1,1133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dreamy Cherry Blossom Storm</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #d8bfd3;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <script>
+    (() => {
+      const canvas = document.getElementById("scene");
+      const ctx = canvas.getContext("2d", { alpha: false });
+      const backgroundCanvas = document.createElement("canvas");
+      const backgroundCtx = backgroundCanvas.getContext("2d");
+      const treeCanvas = document.createElement("canvas");
+      const treeCtx = treeCanvas.getContext("2d");
+
+      let width = 0;
+      let height = 0;
+      let dpr = 1;
+      let lastTime = 0;
+      let sceneTime = 0;
+      let treeBaseX = 0;
+      let branchSegments = [];
+      let blossomClusters = [];
+      let spawnPoints = [];
+      let petals = [];
+      let groundPetals = [];
+      let gusts = [];
+      let petalSprites = [];
+      let nextGustAt = 0;
+      const pointer = {
+        x: 0,
+        y: 0,
+        targetX: 0,
+        targetY: 0,
+        prevX: 0,
+        prevY: 0,
+        vx: 0,
+        vy: 0,
+        inside: false,
+        down: false,
+        initialized: false,
+        energy: 0,
+        press: 0,
+        liftCarry: 0
+      };
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function lerp(a, b, t) {
+        return a + (b - a) * t;
+      }
+
+      function randomBetween(min, max) {
+        return min + Math.random() * (max - min);
+      }
+
+      function mulberry32(seed) {
+        let t = seed >>> 0;
+        return () => {
+          t += 0x6d2b79f5;
+          let r = Math.imul(t ^ (t >>> 15), 1 | t);
+          r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+          return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      function seededBetween(rng, min, max) {
+        return min + rng() * (max - min);
+      }
+
+      function setupLayer(targetCanvas, targetCtx) {
+        targetCanvas.width = Math.max(1, Math.floor(width * dpr));
+        targetCanvas.height = Math.max(1, Math.floor(height * dpr));
+        targetCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        targetCtx.imageSmoothingEnabled = true;
+      }
+
+      function groundYAt(x) {
+        const mound = Math.exp(-Math.pow((x - treeBaseX) / (width * 0.26), 2)) * height * 0.04;
+        const drift = Math.exp(-Math.pow((x - width * 0.72) / (width * 0.2), 2)) * height * 0.015;
+        const wave = Math.sin((x / Math.max(width, 1)) * Math.PI * 1.25 + 0.45) * height * 0.01;
+        return height * 0.855 - mound - drift + wave;
+      }
+
+      function createPetalSprites() {
+        const palettes = [
+          { top: "#fffdfd", mid: "#ffe4ee", bottom: "#f4c3d2", glow: "rgba(255,255,255,0.68)" },
+          { top: "#fff8fb", mid: "#ffd8e8", bottom: "#efb2ca", glow: "rgba(255,240,247,0.64)" },
+          { top: "#fffaf7", mid: "#ffe9f2", bottom: "#f7ccda", glow: "rgba(255,248,252,0.72)" },
+          { top: "#fffef6", mid: "#fff1f7", bottom: "#f1bfd4", glow: "rgba(255,255,255,0.7)" }
+        ];
+
+        return palettes.map((palette, index) => {
+          const sprite = document.createElement("canvas");
+          sprite.width = 64;
+          sprite.height = 64;
+          const spriteCtx = sprite.getContext("2d");
+
+          spriteCtx.translate(32, 32);
+          spriteCtx.rotate((index - 1.5) * 0.08);
+          spriteCtx.shadowColor = palette.glow;
+          spriteCtx.shadowBlur = 10;
+
+          const gradient = spriteCtx.createLinearGradient(0, -18, 0, 18);
+          gradient.addColorStop(0, palette.top);
+          gradient.addColorStop(0.55, palette.mid);
+          gradient.addColorStop(1, palette.bottom);
+          spriteCtx.fillStyle = gradient;
+
+          spriteCtx.beginPath();
+          spriteCtx.moveTo(0, -16);
+          spriteCtx.bezierCurveTo(11, -18, 17, -5, 0, 18);
+          spriteCtx.bezierCurveTo(-17, -5, -11, -18, 0, -16);
+          spriteCtx.fill();
+
+          spriteCtx.shadowBlur = 0;
+          spriteCtx.strokeStyle = "rgba(255,255,255,0.55)";
+          spriteCtx.lineWidth = 1.5;
+          spriteCtx.beginPath();
+          spriteCtx.moveTo(0, -12);
+          spriteCtx.quadraticCurveTo(2, 0, 0, 12);
+          spriteCtx.stroke();
+
+          return sprite;
+        });
+      }
+
+      function drawMountainLayer(targetCtx, options) {
+        const { baseY, amplitude, color, blur, seed } = options;
+        const rng = mulberry32(seed);
+        const points = [];
+        const segments = 7;
+
+        for (let i = 0; i <= segments; i += 1) {
+          const t = i / segments;
+          const x = lerp(-width * 0.08, width * 1.08, t);
+          const wave = Math.sin(t * Math.PI * 2.2 + seed * 0.1) * amplitude * 0.18;
+          const y = baseY - amplitude * seededBetween(rng, 0.18, 1) + wave;
+          points.push({ x, y });
+        }
+
+        targetCtx.save();
+        targetCtx.filter = blur ? `blur(${blur}px)` : "none";
+        targetCtx.fillStyle = color;
+        targetCtx.beginPath();
+        targetCtx.moveTo(-width * 0.1, height);
+        targetCtx.lineTo(points[0].x, baseY + amplitude * 0.55);
+
+        for (let i = 1; i < points.length - 1; i += 1) {
+          const midpointX = (points[i].x + points[i + 1].x) * 0.5;
+          const midpointY = (points[i].y + points[i + 1].y) * 0.5;
+          targetCtx.quadraticCurveTo(points[i].x, points[i].y, midpointX, midpointY);
+        }
+
+        const last = points[points.length - 1];
+        targetCtx.quadraticCurveTo(last.x, last.y, width * 1.1, baseY + amplitude * 0.5);
+        targetCtx.lineTo(width * 1.1, height);
+        targetCtx.closePath();
+        targetCtx.fill();
+        targetCtx.restore();
+      }
+
+      function drawSunlight(targetCtx) {
+        const sunX = width * 0.87;
+        const sunY = height * 0.14;
+
+        const halo = targetCtx.createRadialGradient(sunX, sunY, 0, sunX, sunY, width * 0.24);
+        halo.addColorStop(0, "rgba(255,239,230,0.58)");
+        halo.addColorStop(0.12, "rgba(251,220,201,0.18)");
+        halo.addColorStop(0.45, "rgba(245,197,216,0.04)");
+        halo.addColorStop(1, "rgba(255,255,255,0)");
+        targetCtx.fillStyle = halo;
+        targetCtx.beginPath();
+        targetCtx.arc(sunX, sunY, width * 0.24, 0, Math.PI * 2);
+        targetCtx.fill();
+
+        targetCtx.save();
+        targetCtx.translate(sunX, sunY);
+        targetCtx.rotate(-0.32);
+        const streak = targetCtx.createLinearGradient(-width * 0.34, 0, width * 0.34, 0);
+        streak.addColorStop(0, "rgba(255,255,255,0)");
+        streak.addColorStop(0.42, "rgba(251,232,223,0.05)");
+        streak.addColorStop(0.5, "rgba(252,242,237,0.1)");
+        streak.addColorStop(0.58, "rgba(248,225,218,0.05)");
+        streak.addColorStop(1, "rgba(255,255,255,0)");
+        targetCtx.fillStyle = streak;
+        targetCtx.fillRect(-width * 0.34, -2, width * 0.68, 4);
+        targetCtx.restore();
+
+        const artifacts = [
+          { t: 0.14, r: 18, alpha: 0.16 },
+          { t: 0.29, r: 10, alpha: 0.1 },
+          { t: 0.51, r: 24, alpha: 0.08 }
+        ];
+
+        for (const artifact of artifacts) {
+          const x = lerp(sunX, width * 0.4, artifact.t);
+          const y = lerp(sunY, height * 0.56, artifact.t);
+          const gradient = targetCtx.createRadialGradient(x, y, 0, x, y, artifact.r * 3);
+          gradient.addColorStop(0, `rgba(251,236,229,${artifact.alpha * 0.7})`);
+          gradient.addColorStop(0.3, `rgba(245,210,223,${artifact.alpha * 0.32})`);
+          gradient.addColorStop(1, "rgba(255,255,255,0)");
+          targetCtx.fillStyle = gradient;
+          targetCtx.beginPath();
+          targetCtx.arc(x, y, artifact.r * 3, 0, Math.PI * 2);
+          targetCtx.fill();
+        }
+      }
+
+      function drawAtmosphericTexture(targetCtx) {
+        const accents = [
+          { x: width * 0.2, y: height * 0.16, radius: width * 0.28, color: "rgba(236,214,228,0.08)" },
+          { x: width * 0.7, y: height * 0.22, radius: width * 0.34, color: "rgba(209,193,224,0.09)" },
+          { x: width * 0.44, y: height * 0.48, radius: width * 0.24, color: "rgba(228,208,225,0.05)" },
+          { x: width * 0.82, y: height * 0.58, radius: width * 0.22, color: "rgba(198,182,212,0.06)" }
+        ];
+
+        for (const accent of accents) {
+          const gradient = targetCtx.createRadialGradient(
+            accent.x,
+            accent.y,
+            0,
+            accent.x,
+            accent.y,
+            accent.radius
+          );
+          gradient.addColorStop(0, accent.color);
+          gradient.addColorStop(0.55, accent.color.replace(/0\.\d+\)$/, "0.03)"));
+          gradient.addColorStop(1, "rgba(255,255,255,0)");
+          targetCtx.fillStyle = gradient;
+          targetCtx.beginPath();
+          targetCtx.arc(accent.x, accent.y, accent.radius, 0, Math.PI * 2);
+          targetCtx.fill();
+        }
+
+        const vignette = targetCtx.createRadialGradient(
+          width * 0.5,
+          height * 0.42,
+          width * 0.12,
+          width * 0.5,
+          height * 0.42,
+          width * 0.82
+        );
+        vignette.addColorStop(0, "rgba(255,255,255,0)");
+        vignette.addColorStop(0.7, "rgba(137,118,155,0.03)");
+        vignette.addColorStop(1, "rgba(108,90,125,0.08)");
+        targetCtx.fillStyle = vignette;
+        targetCtx.fillRect(0, 0, width, height);
+
+        const noiseCanvas = document.createElement("canvas");
+        noiseCanvas.width = Math.max(160, Math.floor(width));
+        noiseCanvas.height = Math.max(120, Math.floor(height));
+
+        const noiseCtx = noiseCanvas.getContext("2d");
+        const noise = noiseCtx.createImageData(noiseCanvas.width, noiseCanvas.height);
+        const data = noise.data;
+        const rng = mulberry32(((width * 92821) ^ (height * 68917) ^ 0x85ebca6b) >>> 0);
+
+        // A tiny textured wash helps hide visible gradient banding on weaker panels.
+        for (let i = 0; i < data.length; i += 4) {
+          const base = 118 + Math.floor(rng() * 26);
+          const tint = rng() - 0.5;
+          data[i] = base + tint * 12 + 8;
+          data[i + 1] = base + tint * 4 + 2;
+          data[i + 2] = base - tint * 10 + 10;
+          data[i + 3] = 16 + Math.floor(rng() * 18);
+        }
+
+        noiseCtx.putImageData(noise, 0, 0);
+
+        targetCtx.save();
+        targetCtx.globalCompositeOperation = "soft-light";
+        targetCtx.globalAlpha = 0.18;
+        targetCtx.drawImage(noiseCanvas, 0, 0, width, height);
+        targetCtx.restore();
+
+        targetCtx.save();
+        targetCtx.globalAlpha = 0.035;
+        targetCtx.drawImage(noiseCanvas, 0, 0, width, height);
+        targetCtx.restore();
+      }
+
+      function buildBackground() {
+        setupLayer(backgroundCanvas, backgroundCtx);
+
+        const sky = backgroundCtx.createLinearGradient(0, 0, 0, height);
+        sky.addColorStop(0, "#e0c5d7");
+        sky.addColorStop(0.48, "#d0bddf");
+        sky.addColorStop(1, "#c5b9e4");
+        backgroundCtx.fillStyle = sky;
+        backgroundCtx.fillRect(0, 0, width, height);
+
+        const wash = backgroundCtx.createLinearGradient(width, 0, 0, height);
+        wash.addColorStop(0, "rgba(220,191,192,0.22)");
+        wash.addColorStop(0.45, "rgba(222,190,211,0.06)");
+        wash.addColorStop(1, "rgba(255,255,255,0)");
+        backgroundCtx.fillStyle = wash;
+        backgroundCtx.fillRect(0, 0, width, height);
+
+        drawSunlight(backgroundCtx);
+
+        drawMountainLayer(backgroundCtx, {
+          baseY: height * 0.66,
+          amplitude: height * 0.12,
+          color: "rgba(128, 108, 154, 0.3)",
+          blur: 18,
+          seed: 11
+        });
+        drawMountainLayer(backgroundCtx, {
+          baseY: height * 0.72,
+          amplitude: height * 0.09,
+          color: "rgba(145, 126, 171, 0.36)",
+          blur: 10,
+          seed: 27
+        });
+        drawMountainLayer(backgroundCtx, {
+          baseY: height * 0.77,
+          amplitude: height * 0.06,
+          color: "rgba(164, 148, 188, 0.42)",
+          blur: 4,
+          seed: 43
+        });
+
+        const mist = backgroundCtx.createLinearGradient(0, height * 0.46, 0, height);
+        mist.addColorStop(0, "rgba(255,255,255,0)");
+        mist.addColorStop(0.35, "rgba(219,201,218,0.14)");
+        mist.addColorStop(0.7, "rgba(208,190,213,0.28)");
+        mist.addColorStop(1, "rgba(193,177,201,0.6)");
+        backgroundCtx.fillStyle = mist;
+        backgroundCtx.fillRect(0, height * 0.46, width, height * 0.54);
+
+        for (let i = 0; i < 3; i += 1) {
+          const fogX = lerp(width * 0.2, width * 0.85, i / 2);
+          const fogY = height * (0.7 + i * 0.04);
+          const fog = backgroundCtx.createRadialGradient(fogX, fogY, 0, fogX, fogY, width * 0.22);
+          fog.addColorStop(0, "rgba(234,223,232,0.13)");
+          fog.addColorStop(0.5, "rgba(223,210,223,0.07)");
+          fog.addColorStop(1, "rgba(255,255,255,0)");
+          backgroundCtx.fillStyle = fog;
+          backgroundCtx.beginPath();
+          backgroundCtx.arc(fogX, fogY, width * 0.22, 0, Math.PI * 2);
+          backgroundCtx.fill();
+        }
+
+        drawAtmosphericTexture(backgroundCtx);
+
+        const groundGradient = backgroundCtx.createLinearGradient(0, height * 0.78, 0, height);
+        groundGradient.addColorStop(0, "rgba(214,195,213,0.7)");
+        groundGradient.addColorStop(1, "rgba(186,167,191,0.96)");
+        backgroundCtx.fillStyle = groundGradient;
+        backgroundCtx.beginPath();
+        backgroundCtx.moveTo(0, height);
+        backgroundCtx.lineTo(0, groundYAt(0));
+        for (let x = 24; x <= width + 24; x += 24) {
+          backgroundCtx.lineTo(x, groundYAt(x));
+        }
+        backgroundCtx.lineTo(width, height);
+        backgroundCtx.closePath();
+        backgroundCtx.fill();
+      }
+
+      function addBlossomCluster(x, y, thickness, rng, depth, tip = false) {
+        blossomClusters.push({
+          x,
+          y,
+          radius: Math.max(8, thickness * seededBetween(rng, 1.4, 2.8) + depth),
+          count: Math.floor(seededBetween(rng, tip ? 12 : 8, tip ? 22 : 16) + depth * 1.3),
+          alpha: seededBetween(rng, 0.6, 0.96),
+          seed: Math.floor(seededBetween(rng, 0, 1) * 1e9)
+        });
+      }
+
+      function traceBranch(x, y, length, angle, depth, thickness, rng) {
+        const bend = seededBetween(rng, -0.28, 0.28) * (depth < 2 ? 0.45 : 0.85);
+        const controlX = x + Math.cos(angle + bend) * length * 0.46;
+        const controlY = y + Math.sin(angle + bend) * length * 0.46;
+        const x2 = x + Math.cos(angle) * length;
+        const y2 = y + Math.sin(angle) * length;
+
+        branchSegments.push({
+          x,
+          y,
+          controlX,
+          controlY,
+          x2,
+          y2,
+          width: thickness
+        });
+
+        if (depth >= 2 && seededBetween(rng, 0, 1) < 0.86) {
+          addBlossomCluster(x2, y2, thickness, rng, depth, false);
+        }
+
+        if (depth >= 4 && seededBetween(rng, 0, 1) < 0.58) {
+          const t = seededBetween(rng, 0.34, 0.78);
+          addBlossomCluster(
+            lerp(x, x2, t) + seededBetween(rng, -6, 6),
+            lerp(y, y2, t) + seededBetween(rng, -6, 6),
+            thickness * 0.8,
+            rng,
+            depth,
+            false
+          );
+        }
+
+        if (depth >= 6 || length < 24 || thickness < 1.6) {
+          for (let i = 0; i < 2; i += 1) {
+            addBlossomCluster(
+              x2 + seededBetween(rng, -8, 8),
+              y2 + seededBetween(rng, -8, 8),
+              thickness * 0.78,
+              rng,
+              depth + 1,
+              true
+            );
+          }
+          spawnPoints.push({
+            x: x2,
+            y: y2,
+            spread: 16 + length * 0.2
+          });
+          return;
+        }
+
+        const childCount =
+          depth === 0 ? 3 :
+          depth < 2 ? (seededBetween(rng, 0, 1) < 0.42 ? 3 : 2) :
+          seededBetween(rng, 0, 1) < 0.16 ? 3 : 2;
+        const spread = depth < 2 ? 0.46 : 0.62;
+
+        for (let i = 0; i < childCount; i += 1) {
+          const offset = childCount === 3 ? i - 1 : i === 0 ? -0.5 : 0.5;
+          const angleOffset =
+            offset * spread +
+            seededBetween(rng, -0.16, 0.16) +
+            (offset === 0 ? seededBetween(rng, -0.12, 0.12) : 0);
+          const nextAngle = angle + angleOffset - depth * 0.01 + seededBetween(rng, -0.04, 0.04);
+          const nextLength = length * seededBetween(rng, depth < 2 ? 0.64 : 0.58, depth < 2 ? 0.76 : 0.72);
+          const nextThickness = thickness * seededBetween(rng, 0.62, 0.76);
+          traceBranch(x2, y2, nextLength, nextAngle, depth + 1, nextThickness, rng);
+        }
+
+        if (depth < 3 && seededBetween(rng, 0, 1) < 0.52) {
+          const t = seededBetween(rng, 0.48, 0.72);
+          traceBranch(
+            lerp(x, x2, t),
+            lerp(y, y2, t),
+            length * seededBetween(rng, 0.46, 0.58),
+            angle + seededBetween(rng, -0.52, 0.52),
+            depth + 1,
+            thickness * seededBetween(rng, 0.52, 0.64),
+            rng
+          );
+        }
+      }
+
+      function drawBlossomCluster(targetCtx, cluster) {
+        const rng = mulberry32(cluster.seed);
+
+        targetCtx.save();
+        targetCtx.translate(cluster.x, cluster.y);
+        targetCtx.globalAlpha = cluster.alpha;
+
+        const halo = targetCtx.createRadialGradient(0, 0, 0, 0, 0, cluster.radius * 1.85);
+        halo.addColorStop(0, "rgba(255,245,250,0.26)");
+        halo.addColorStop(0.55, "rgba(255,228,239,0.08)");
+        halo.addColorStop(1, "rgba(255,255,255,0)");
+        targetCtx.fillStyle = halo;
+        targetCtx.beginPath();
+        targetCtx.arc(0, 0, cluster.radius * 1.85, 0, Math.PI * 2);
+        targetCtx.fill();
+
+        for (let i = 0; i < cluster.count; i += 1) {
+          const angle = seededBetween(rng, 0, Math.PI * 2);
+          const distance = Math.pow(seededBetween(rng, 0, 1), 0.72) * cluster.radius;
+          const px = Math.cos(angle) * distance;
+          const py = Math.sin(angle) * distance * 0.75;
+          const size = seededBetween(rng, 3.5, 7.2);
+          const rotation = seededBetween(rng, -Math.PI, Math.PI);
+          const pale = rng() < 0.38;
+
+          targetCtx.save();
+          targetCtx.translate(px, py);
+          targetCtx.rotate(rotation);
+
+          const petalGradient = targetCtx.createLinearGradient(0, -size, 0, size);
+          petalGradient.addColorStop(0, pale ? "rgba(255,255,250,0.98)" : "rgba(255,244,248,0.96)");
+          petalGradient.addColorStop(1, pale ? "rgba(249,208,223,0.95)" : "rgba(246,191,212,0.94)");
+          targetCtx.fillStyle = petalGradient;
+
+          targetCtx.beginPath();
+          targetCtx.moveTo(0, -size * 0.9);
+          targetCtx.bezierCurveTo(size * 0.62, -size * 0.7, size * 0.95, size * 0.15, 0, size * 1.15);
+          targetCtx.bezierCurveTo(-size * 0.95, size * 0.15, -size * 0.62, -size * 0.7, 0, -size * 0.9);
+          targetCtx.fill();
+
+          targetCtx.restore();
+        }
+
+        targetCtx.restore();
+      }
+
+      function buildTree() {
+        setupLayer(treeCanvas, treeCtx);
+        branchSegments = [];
+        blossomClusters = [];
+        spawnPoints = [];
+
+        const seed = ((width * 73856093) ^ (height * 19349663) ^ 0x9e3779b9) >>> 0;
+        const rng = mulberry32(seed);
+        treeBaseX = width < 700 ? width * 0.42 : width * 0.34;
+        const baseY = groundYAt(treeBaseX) + height * 0.012;
+        const trunkLength = height * (width < 700 ? 0.18 : 0.2);
+
+        traceBranch(treeBaseX, baseY, trunkLength, -1.52, 0, width < 700 ? 12 : 15, rng);
+        traceBranch(treeBaseX - width * 0.006, baseY - trunkLength * 0.12, trunkLength * 0.94, -1.82, 1, 9.2, rng);
+        traceBranch(treeBaseX + width * 0.004, baseY - trunkLength * 0.14, trunkLength * 0.98, -1.13, 1, 10.4, rng);
+        traceBranch(treeBaseX - width * 0.002, baseY - trunkLength * 0.08, trunkLength * 0.72, -2.08, 2, 7.2, rng);
+
+        const baseShadow = treeCtx.createRadialGradient(
+          treeBaseX + width * 0.05,
+          baseY + height * 0.03,
+          0,
+          treeBaseX + width * 0.05,
+          baseY + height * 0.03,
+          width * 0.24
+        );
+        baseShadow.addColorStop(0, "rgba(72,44,58,0.16)");
+        baseShadow.addColorStop(0.55, "rgba(93,66,84,0.08)");
+        baseShadow.addColorStop(1, "rgba(255,255,255,0)");
+        treeCtx.fillStyle = baseShadow;
+        treeCtx.beginPath();
+        treeCtx.ellipse(treeBaseX + width * 0.05, baseY + height * 0.03, width * 0.24, height * 0.07, -0.08, 0, Math.PI * 2);
+        treeCtx.fill();
+
+        branchSegments.sort((a, b) => b.width - a.width);
+        treeCtx.lineCap = "round";
+        treeCtx.lineJoin = "round";
+
+        for (const segment of branchSegments) {
+          treeCtx.shadowColor = "rgba(31,12,23,0.18)";
+          treeCtx.shadowBlur = segment.width * 1.1;
+          treeCtx.strokeStyle = "rgba(34,23,30,0.94)";
+          treeCtx.lineWidth = segment.width * 1.18;
+          treeCtx.beginPath();
+          treeCtx.moveTo(segment.x, segment.y);
+          treeCtx.quadraticCurveTo(segment.controlX, segment.controlY, segment.x2, segment.y2);
+          treeCtx.stroke();
+
+          treeCtx.shadowBlur = 0;
+          treeCtx.strokeStyle = "rgba(112,78,88,0.22)";
+          treeCtx.lineWidth = segment.width * 0.34;
+          treeCtx.beginPath();
+          treeCtx.moveTo(segment.x, segment.y);
+          treeCtx.quadraticCurveTo(segment.controlX, segment.controlY, segment.x2, segment.y2);
+          treeCtx.stroke();
+        }
+
+        for (const cluster of blossomClusters) {
+          drawBlossomCluster(treeCtx, cluster);
+        }
+      }
+
+      function groundPetalLimit() {
+        return Math.max(260, Math.min(720, Math.floor(width * 0.45)));
+      }
+
+      function createGroundPetal(x, y, sourcePetal) {
+        const heightScale = clamp(height / 900, 0.88, 1.2);
+        return {
+          x,
+          y,
+          angle: sourcePetal ? sourcePetal.angle + randomBetween(-0.25, 0.25) : randomBetween(-Math.PI, Math.PI),
+          size: (sourcePetal ? sourcePetal.size : randomBetween(0.08, 0.16) * heightScale) * randomBetween(0.9, 1.25),
+          aspect: sourcePetal ? sourcePetal.aspect * randomBetween(0.8, 1.08) : randomBetween(0.85, 1.15),
+          sprite: sourcePetal ? sourcePetal.sprite : (Math.random() * petalSprites.length) | 0,
+          alpha: sourcePetal ? randomBetween(0.28, 0.78) : randomBetween(0.18, 0.62),
+          phase: randomBetween(0, Math.PI * 2)
+        };
+      }
+
+      function seedGroundPetals() {
+        groundPetals = [];
+        const count = Math.max(180, Math.min(520, Math.floor(width * 0.32)));
+
+        for (let i = 0; i < count; i += 1) {
+          let x = treeBaseX + (Math.random() - 0.15) * width * randomBetween(0.2, 0.38);
+          if (Math.random() < 0.26) {
+            x = Math.random() * width;
+          }
+          x = clamp(x, 0, width);
+          const y = groundYAt(x) + randomBetween(0, 16);
+          groundPetals.push(createGroundPetal(x, y, null));
+        }
+      }
+
+      function storeGroundPetal(sourcePetal) {
+        const x = clamp(sourcePetal.x + sourcePetal.vx * 0.12, 0, width);
+        const y = groundYAt(x) + randomBetween(0, 10);
+        const petal = createGroundPetal(x, y, sourcePetal);
+
+        if (groundPetals.length < groundPetalLimit()) {
+          groundPetals.push(petal);
+        } else {
+          groundPetals[(Math.random() * groundPetals.length) | 0] = petal;
+        }
+      }
+
+      function resetPetal(petal, initial) {
+        const point = spawnPoints[(Math.random() * spawnPoints.length) | 0] || {
+          x: width * 0.38,
+          y: height * 0.24,
+          spread: 48
+        };
+        const heightScale = clamp(height / 900, 0.9, 1.2);
+
+        petal.x = point.x + randomBetween(-point.spread, point.spread);
+        petal.y = point.y + randomBetween(-point.spread * 0.55, point.spread * 0.2);
+        if (initial) {
+          petal.x += randomBetween(-point.spread * 1.35, point.spread * 1.8);
+          petal.y += randomBetween(-height * 0.03, height * 0.015);
+        }
+
+        petal.vx = randomBetween(-10, 16);
+        petal.vy = randomBetween(16, 36);
+        petal.gravity = randomBetween(18, 38);
+        petal.terminal = randomBetween(42, 90);
+        petal.swayAmp = randomBetween(6, 24);
+        petal.swaySpeed = randomBetween(0.55, 1.5);
+        petal.curveAmp = randomBetween(4, 18);
+        petal.floatAmp = randomBetween(1, 7);
+        petal.floatSpeed = randomBetween(0.6, 1.8);
+        petal.angle = randomBetween(0, Math.PI * 2);
+        petal.spin = randomBetween(-1.8, 1.8);
+        petal.size = randomBetween(0.1, 0.19) * heightScale;
+        petal.aspect = randomBetween(0.82, 1.25);
+        petal.alpha = randomBetween(0.55, 0.92);
+        petal.phase = randomBetween(0, Math.PI * 2);
+        petal.sprite = (Math.random() * petalSprites.length) | 0;
+        petal.layer = Math.random() < 0.44 ? 0 : 1;
+        petal.driftBias = randomBetween(-4, 9);
+        petal.flutter = randomBetween(2.4, 5.8);
+      }
+
+      function rebuildParticles() {
+        const targetCount = Math.min(2600, Math.max(1500, Math.floor((width * height) / 850)));
+        petals = new Array(targetCount);
+
+        for (let i = 0; i < targetCount; i += 1) {
+          const petal = {};
+          resetPetal(petal, true);
+          petals[i] = petal;
+        }
+
+        seedGroundPetals();
+        gusts = [];
+        scheduleNextGust(sceneTime);
+      }
+
+      function warmupScene(duration = 4.2) {
+        const step = 1 / 30;
+        const steps = Math.ceil(duration / step);
+
+        for (let i = 0; i < steps; i += 1) {
+          updateGusts(step, sceneTime);
+          updatePetals(step, sceneTime);
+          sceneTime += step;
+        }
+      }
+
+      function scheduleNextGust(time) {
+        const clusterDelay =
+          Math.random() < 0.38 ?
+            randomBetween(1.1, 2.1) :
+            randomBetween(2.2, 4.2);
+        nextGustAt = time + clusterDelay;
+      }
+
+      function updatePointerTarget(clientX, clientY) {
+        const rect = canvas.getBoundingClientRect();
+        const x = clamp(clientX - rect.left, 0, width);
+        const y = clamp(clientY - rect.top, 0, height);
+
+        pointer.targetX = x;
+        pointer.targetY = y;
+
+        if (!pointer.initialized) {
+          pointer.x = x;
+          pointer.y = y;
+          pointer.prevX = x;
+          pointer.prevY = y;
+          pointer.initialized = true;
+        }
+      }
+
+      function pointerIsInsideCanvas(clientX, clientY) {
+        const rect = canvas.getBoundingClientRect();
+        return (
+          clientX >= rect.left &&
+          clientX <= rect.right &&
+          clientY >= rect.top &&
+          clientY <= rect.bottom
+        );
+      }
+
+      function updatePointer(dt) {
+        if (!pointer.initialized) {
+          return;
+        }
+
+        const moveLerp = Math.min(1, dt * 16);
+        pointer.x = lerp(pointer.x, pointer.targetX, moveLerp);
+        pointer.y = lerp(pointer.y, pointer.targetY, moveLerp);
+
+        const invDt = 1 / Math.max(dt, 0.0001);
+        const instantVx = (pointer.x - pointer.prevX) * invDt;
+        const instantVy = (pointer.y - pointer.prevY) * invDt;
+        const velocityLerp = Math.min(1, dt * 10);
+
+        pointer.vx += (instantVx - pointer.vx) * velocityLerp;
+        pointer.vy += (instantVy - pointer.vy) * velocityLerp;
+        pointer.prevX = pointer.x;
+        pointer.prevY = pointer.y;
+
+        const energyTarget = pointer.inside ? 1 : 0;
+        const pressTarget = pointer.down ? 1 : 0;
+        pointer.energy += (energyTarget - pointer.energy) * Math.min(1, dt * (pointer.inside ? 8 : 4));
+        pointer.press += (pressTarget - pointer.press) * Math.min(1, dt * (pointer.down ? 10 : 6));
+
+        if (!pointer.inside && pointer.energy < 0.02) {
+          pointer.vx *= Math.max(0, 1 - dt * 6);
+          pointer.vy *= Math.max(0, 1 - dt * 6);
+        }
+      }
+
+      function applyPointerForce(petal, dt, time) {
+        const fieldStrength = pointer.energy * 0.7 + pointer.press * 0.9;
+        if (!pointer.initialized || fieldStrength < 0.01) {
+          return 0;
+        }
+
+        const radius = lerp(Math.min(width, height) * 0.08, Math.min(width, height) * 0.19, pointer.press);
+        const dx = petal.x - pointer.x;
+        const dy = petal.y - pointer.y;
+        const distanceSquared = dx * dx + dy * dy;
+
+        if (distanceSquared >= radius * radius) {
+          return 0;
+        }
+
+        const distance = Math.sqrt(distanceSquared) + 0.001;
+        const nx = dx / distance;
+        const ny = dy / distance;
+        const spinDirection = pointer.vx < -16 ? -1 : 1;
+        const tx = -ny * spinDirection;
+        const ty = nx * spinDirection;
+        const falloff = Math.pow(1 - distance / radius, 2);
+        const motionFactor = clamp(Math.hypot(pointer.vx, pointer.vy) / 380, 0, 1);
+        const hoverStrength = pointer.energy * (1 - pointer.press * 0.55);
+        const pressStrength = pointer.press;
+        const orbital = hoverStrength * 30 + pressStrength * 56;
+        const push = hoverStrength * 8 + pressStrength * 46;
+        const lift = hoverStrength * 10 + pressStrength * 28;
+        const driftX = pointer.vx * (0.016 + pressStrength * 0.018);
+        const driftY = pointer.vy * (0.01 + pressStrength * 0.012);
+        const pulse = 1 + Math.sin(time * 2.2 + petal.phase) * 0.08;
+
+        petal.vx += (tx * orbital + nx * push + driftX * (0.45 + motionFactor * 0.55)) * falloff * pulse * dt;
+        petal.vy += (ty * orbital + ny * push + driftY * (0.35 + motionFactor * 0.5) - lift) * falloff * pulse * dt;
+        petal.angle += (hoverStrength * 0.6 + pressStrength * 1.8) * falloff * dt;
+
+        return falloff * (0.45 + pressStrength * 0.55);
+      }
+
+      function launchGroundPetal(groundPetal) {
+        if (!petals.length) {
+          return;
+        }
+
+        const petal = petals[(Math.random() * petals.length) | 0];
+        const dx = groundPetal.x - pointer.x;
+        const dy = groundPetal.y - pointer.y;
+        const distance = Math.sqrt(dx * dx + dy * dy) + 0.001;
+        const nx = dx / distance;
+        const ny = dy / distance;
+        const spinDirection = pointer.vx < -16 ? -1 : 1;
+        const tx = -ny * spinDirection;
+        const ty = nx * spinDirection;
+        const motionFactor = clamp(Math.hypot(pointer.vx, pointer.vy) / 420, 0, 1);
+
+        petal.x = groundPetal.x + randomBetween(-4, 4);
+        petal.y = groundPetal.y - randomBetween(2, 8);
+        petal.vx =
+          nx * randomBetween(18, 42) +
+          tx * randomBetween(12, 28) +
+          pointer.vx * (0.04 + motionFactor * 0.05);
+        petal.vy =
+          ny * randomBetween(6, 16) +
+          ty * randomBetween(4, 10) -
+          randomBetween(24, 46) +
+          pointer.vy * 0.025 -
+          pointer.press * 8;
+        petal.angle = groundPetal.angle + randomBetween(-0.8, 0.8);
+        petal.spin = randomBetween(-2.2, 2.2);
+        petal.size = groundPetal.size * randomBetween(0.95, 1.08);
+        petal.aspect = groundPetal.aspect * randomBetween(0.95, 1.05);
+        petal.alpha = clamp(groundPetal.alpha + randomBetween(0.08, 0.24), 0.56, 0.95);
+        petal.phase = randomBetween(0, Math.PI * 2);
+        petal.sprite = groundPetal.sprite;
+        petal.layer = Math.random() < 0.52 ? 1 : 0;
+        petal.gravity = randomBetween(18, 38);
+        petal.terminal = randomBetween(42, 90);
+        petal.swayAmp = randomBetween(6, 24);
+        petal.swaySpeed = randomBetween(0.55, 1.5);
+        petal.curveAmp = randomBetween(4, 18);
+        petal.floatAmp = randomBetween(1, 7);
+        petal.floatSpeed = randomBetween(0.6, 1.8);
+        petal.driftBias = randomBetween(-4, 9);
+        petal.flutter = randomBetween(2.4, 5.8);
+      }
+
+      function scatterGroundPetals(dt) {
+        if (!pointer.initialized || pointer.press < 0.08 || pointer.energy < 0.05 || !groundPetals.length) {
+          pointer.liftCarry = 0;
+          return;
+        }
+
+        const radius = lerp(Math.min(width, height) * 0.06, Math.min(width, height) * 0.14, pointer.press);
+        const radiusSquared = radius * radius;
+        pointer.liftCarry = Math.min(pointer.liftCarry + dt * lerp(14, 42, pointer.press), 6);
+
+        let launches = Math.floor(pointer.liftCarry);
+        if (!launches) {
+          return;
+        }
+
+        pointer.liftCarry -= launches;
+
+        for (let i = groundPetals.length - 1; i >= 0 && launches > 0; i -= 1) {
+          const groundPetal = groundPetals[i];
+          const dx = groundPetal.x - pointer.x;
+          const dy = groundPetal.y - pointer.y;
+
+          if (dx * dx + dy * dy < radiusSquared && Math.random() < 0.45) {
+            launchGroundPetal(groundPetal);
+            groundPetals.splice(i, 1);
+            launches -= 1;
+          }
+        }
+      }
+
+      function spawnGust() {
+        gusts.push({
+          x: randomBetween(width * 0.28, width * 0.82),
+          y: randomBetween(height * 0.14, height * 0.62),
+          radius: randomBetween(100, 190),
+          strength: randomBetween(82, 148),
+          spin: Math.random() < 0.5 ? -1 : 1,
+          age: 0,
+          duration: randomBetween(4.2, 6.8),
+          driftX: randomBetween(-8, 18),
+          driftY: randomBetween(-3, 7),
+          upLift: randomBetween(18, 44)
+        });
+
+        if (gusts.length > 4) {
+          gusts.shift();
+        }
+      }
+
+      function updateGusts(dt, time) {
+        if (time > nextGustAt) {
+          spawnGust();
+          scheduleNextGust(time);
+        }
+
+        for (let i = gusts.length - 1; i >= 0; i -= 1) {
+          const gust = gusts[i];
+          gust.age += dt;
+          gust.x += gust.driftX * dt * 8;
+          gust.y += gust.driftY * dt * 8;
+
+          if (
+            gust.age > gust.duration ||
+            gust.x < -gust.radius ||
+            gust.x > width + gust.radius ||
+            gust.y > height + gust.radius
+          ) {
+            gusts.splice(i, 1);
+          }
+        }
+      }
+
+      function updatePetals(dt, time) {
+        const globalWind = Math.sin(time * 0.17) * 18 + Math.sin(time * 0.43 + 1.1) * 9 + 6;
+
+        for (const petal of petals) {
+          const ambient =
+            globalWind +
+            Math.sin(time * petal.swaySpeed + petal.phase) * petal.swayAmp +
+            Math.sin(time * 0.55 + petal.phase * 0.7) * petal.curveAmp * 0.35;
+
+          petal.vx += (ambient + petal.driftBias - petal.vx) * 0.48 * dt;
+          petal.vy = Math.min(petal.terminal, petal.vy + petal.gravity * dt);
+
+          let gustInfluence = 0;
+          for (const gust of gusts) {
+            const dx = petal.x - gust.x;
+            const dy = petal.y - gust.y;
+            const distanceSquared = dx * dx + dy * dy;
+
+            if (distanceSquared < gust.radius * gust.radius) {
+              const distance = Math.sqrt(distanceSquared) + 0.001;
+              const influence = Math.pow(1 - distance / gust.radius, 2);
+              const swirl = gust.spin * gust.strength * influence;
+
+              petal.vx += (-dy / distance * swirl + gust.driftX * 0.4 * influence) * dt;
+              petal.vy += (dx / distance * swirl - gust.upLift * influence) * dt;
+              petal.angle += gust.spin * influence * 1.5 * dt;
+              gustInfluence += influence;
+            }
+          }
+
+          gustInfluence += applyPointerForce(petal, dt, time);
+
+          petal.vy = Math.max(petal.vy, -32);
+
+          const bob = Math.cos(time * petal.floatSpeed + petal.phase) * petal.floatAmp;
+          petal.x += (petal.vx + bob * 0.6) * dt;
+          petal.y += (petal.vy + bob) * dt;
+          petal.angle += (petal.spin + ambient * 0.01) * dt * (0.75 + gustInfluence * 0.7);
+
+          const boundedX = clamp(petal.x, 0, width);
+          const groundY = groundYAt(boundedX);
+          const landed = petal.y > groundY - 4;
+
+          if (petal.x < -120 || petal.x > width + 120 || petal.y < -80 || petal.y > groundY + 28) {
+            if (landed && Math.random() < 0.72) {
+              storeGroundPetal(petal);
+            }
+            resetPetal(petal, false);
+          }
+        }
+      }
+
+      function drawPetalLayer(layer, time) {
+        const depthScale = layer === 0 ? 0.92 : 1.04;
+        const depthAlpha = layer === 0 ? 0.72 : 1;
+
+        for (const petal of petals) {
+          if (petal.layer !== layer) {
+            continue;
+          }
+
+          const flutter = 1 + Math.sin(time * petal.flutter + petal.phase) * 0.1;
+          const scaleX = petal.size * petal.aspect * flutter * depthScale;
+          const scaleY = petal.size * (1.02 - flutter * 0.08) * depthScale;
+          const cosine = Math.cos(petal.angle);
+          const sine = Math.sin(petal.angle);
+
+          ctx.globalAlpha = petal.alpha * depthAlpha;
+          ctx.setTransform(
+            cosine * scaleX * dpr,
+            sine * scaleX * dpr,
+            -sine * scaleY * dpr,
+            cosine * scaleY * dpr,
+            petal.x * dpr,
+            petal.y * dpr
+          );
+          ctx.drawImage(petalSprites[petal.sprite], -32, -32);
+        }
+
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.globalAlpha = 1;
+      }
+
+      function drawGroundPetals(time) {
+        const groundMist = ctx.createLinearGradient(0, height * 0.77, 0, height);
+        groundMist.addColorStop(0, "rgba(255,247,251,0)");
+        groundMist.addColorStop(0.45, "rgba(255,245,249,0.1)");
+        groundMist.addColorStop(1, "rgba(244,233,242,0.24)");
+        ctx.fillStyle = groundMist;
+        ctx.fillRect(0, height * 0.77, width, height * 0.23);
+
+        for (const petal of groundPetals) {
+          const shimmer = Math.sin(time * 0.35 + petal.phase) * 0.28;
+          const angle = petal.angle + Math.sin(time * 0.22 + petal.phase) * 0.015;
+          const scaleX = petal.size * petal.aspect;
+          const scaleY = petal.size * 0.98;
+          const cosine = Math.cos(angle);
+          const sine = Math.sin(angle);
+
+          ctx.globalAlpha = petal.alpha;
+          ctx.setTransform(
+            cosine * scaleX * dpr,
+            sine * scaleX * dpr,
+            -sine * scaleY * dpr,
+            cosine * scaleY * dpr,
+            petal.x * dpr,
+            (petal.y + shimmer) * dpr
+          );
+          ctx.drawImage(petalSprites[petal.sprite], -32, -32);
+        }
+
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.globalAlpha = 1;
+      }
+
+      function render(time) {
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(backgroundCanvas, 0, 0, width, height);
+        drawPetalLayer(0, time);
+        ctx.drawImage(treeCanvas, 0, 0, width, height);
+        drawPetalLayer(1, time);
+        drawGroundPetals(time);
+      }
+
+      function resize() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        lastTime = 0;
+        sceneTime = 0;
+        treeBaseX = width < 700 ? width * 0.42 : width * 0.34;
+        pointer.targetX = clamp(pointer.targetX, 0, width);
+        pointer.targetY = clamp(pointer.targetY, 0, height);
+        pointer.x = clamp(pointer.x, 0, width);
+        pointer.y = clamp(pointer.y, 0, height);
+        pointer.prevX = pointer.x;
+        pointer.prevY = pointer.y;
+        pointer.vx = 0;
+        pointer.vy = 0;
+        pointer.liftCarry = 0;
+
+        setupLayer(canvas, ctx);
+        petalSprites = createPetalSprites();
+        buildBackground();
+        buildTree();
+        rebuildParticles();
+        warmupScene();
+      }
+
+      function frame(now) {
+        const clockTime = now * 0.001;
+        const dt = Math.min(0.033, lastTime ? clockTime - lastTime : 0.016);
+        lastTime = clockTime;
+        sceneTime += dt;
+
+        updatePointer(dt);
+        updateGusts(dt, sceneTime);
+        scatterGroundPetals(dt);
+        updatePetals(dt, sceneTime);
+        render(sceneTime);
+
+        requestAnimationFrame(frame);
+      }
+
+      canvas.addEventListener("pointermove", (event) => {
+        updatePointerTarget(event.clientX, event.clientY);
+        pointer.inside = true;
+      });
+
+      canvas.addEventListener("pointerdown", (event) => {
+        updatePointerTarget(event.clientX, event.clientY);
+        pointer.inside = true;
+        pointer.down = true;
+        if (canvas.setPointerCapture) {
+          canvas.setPointerCapture(event.pointerId);
+        }
+      });
+
+      canvas.addEventListener("pointerup", (event) => {
+        pointer.down = false;
+        if (typeof event.clientX === "number" && typeof event.clientY === "number") {
+          updatePointerTarget(event.clientX, event.clientY);
+          pointer.inside = pointerIsInsideCanvas(event.clientX, event.clientY);
+        }
+        if (canvas.releasePointerCapture && canvas.hasPointerCapture && canvas.hasPointerCapture(event.pointerId)) {
+          canvas.releasePointerCapture(event.pointerId);
+        }
+      });
+
+      canvas.addEventListener("pointerleave", () => {
+        if (!pointer.down) {
+          pointer.inside = false;
+        }
+      });
+
+      canvas.addEventListener("pointercancel", () => {
+        pointer.down = false;
+        pointer.inside = false;
+      });
+
+      window.addEventListener("pointerup", (event) => {
+        pointer.down = false;
+        if (typeof event.clientX === "number" && typeof event.clientY === "number") {
+          updatePointerTarget(event.clientX, event.clientY);
+          pointer.inside = pointerIsInsideCanvas(event.clientX, event.clientY);
+        } else {
+          pointer.inside = false;
+        }
+      });
+
+      window.addEventListener("resize", resize, { passive: true });
+      resize();
+      requestAnimationFrame(frame);
+    })();
+  </script>
+</body>
+</html>
