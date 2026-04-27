@@ -15,6 +15,8 @@
     }
 
       canvas {
+        position: fixed;
+        inset: 0;
         display: block;
         width: 100%;
         height: 100%;
@@ -22,13 +24,165 @@
         transform: translateZ(0);
         will-change: transform;
       }
+
+      .customizer {
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        z-index: 2;
+      }
+
+      .mode-toggle {
+        border: 1px solid rgba(63, 37, 54, 0.24);
+        border-radius: 999px;
+        padding: 9px 14px;
+        color: rgba(45, 28, 40, 0.82);
+        background: rgba(255, 248, 252, 0.72);
+        box-shadow: 0 10px 30px rgba(65, 40, 62, 0.14);
+        font: 600 12px/1.1 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        backdrop-filter: blur(10px);
+        cursor: pointer;
+      }
+
+      .hamburger-toggle {
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        font-size: 18px;
+        line-height: 1;
+      }
+
+      .customizer-panel {
+        width: min(280px, calc(100vw - 32px));
+        margin-top: 10px;
+        border: 1px solid rgba(63, 37, 54, 0.2);
+        border-radius: 18px;
+        padding: 16px;
+        color: rgba(45, 28, 40, 0.86);
+        background: rgba(255, 248, 252, 0.8);
+        box-shadow: 0 18px 48px rgba(65, 40, 62, 0.18);
+        font: 600 12px/1.2 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.03em;
+        backdrop-filter: blur(14px);
+      }
+
+      .customizer-panel[hidden] {
+        display: none;
+      }
+
+      .control-row {
+        display: grid;
+        gap: 7px;
+        margin-bottom: 14px;
+      }
+
+      .control-label {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        text-transform: uppercase;
+      }
+
+      .control-row input[type="range"] {
+        width: 100%;
+        accent-color: #9b5f61;
+      }
+
+      .control-row select {
+        width: 100%;
+        border: 1px solid rgba(63, 37, 54, 0.2);
+        border-radius: 12px;
+        padding: 9px 10px;
+        color: rgba(45, 28, 40, 0.86);
+        background: rgba(255, 255, 255, 0.58);
+        font: inherit;
+        text-transform: none;
+      }
+
+      .reset-button {
+        width: 100%;
+      }
+
+      .panel-toggle-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+
+      .panel-toggle-row .mode-toggle {
+        padding-inline: 10px;
+      }
+
+      .mode-toggle:focus-visible {
+        outline: 2px solid rgba(142, 72, 105, 0.78);
+        outline-offset: 3px;
+      }
+
+      @media (max-width: 640px) {
+        .mode-toggle {
+          padding: 8px 12px;
+        }
+
+        .customizer {
+          left: 10px;
+          top: 10px;
+        }
+      }
   </style>
 </head>
 <body>
   <canvas id="scene"></canvas>
+  <div class="customizer">
+    <button class="mode-toggle hamburger-toggle" id="customizerToggle" type="button" aria-expanded="false" aria-controls="customizerPanel">☰</button>
+    <div class="customizer-panel" id="customizerPanel" hidden>
+      <div class="panel-toggle-row">
+        <button class="mode-toggle" id="sceneToggle" type="button"></button>
+        <button class="mode-toggle" id="qualityToggle" type="button" aria-pressed="false"></button>
+      </div>
+      <label class="control-row">
+        <span class="control-label"><span>Skybox</span><span id="skyboxValue"></span></span>
+        <select id="skyboxControl">
+          <option value="scene">Scene default</option>
+          <option value="midday">Midday blue</option>
+          <option value="sunset">Sunset</option>
+          <option value="night">Night</option>
+          <option value="overcast">Overcast</option>
+        </select>
+      </label>
+      <label class="control-row">
+        <span class="control-label"><span>Sky tone</span><span id="skyToneValue"></span></span>
+        <input id="skyToneControl" type="range" min="-50" max="50" step="1">
+      </label>
+      <label class="control-row">
+        <span class="control-label"><span>Clouds</span><span id="cloudAmountValue"></span></span>
+        <input id="cloudAmountControl" type="range" min="0" max="100" step="5">
+      </label>
+      <label class="control-row">
+        <span class="control-label"><span>Wind</span><span id="windSpeedValue"></span></span>
+        <input id="windSpeedControl" type="range" min="25" max="220" step="5">
+      </label>
+      <button class="mode-toggle reset-button" id="resetCustomizer" type="button">Reset controls</button>
+    </div>
+  </div>
   <script>
     (() => {
       const canvas = document.getElementById("scene");
+      const customizerToggle = document.getElementById("customizerToggle");
+      const customizerPanel = document.getElementById("customizerPanel");
+      const skyboxControl = document.getElementById("skyboxControl");
+      const skyboxValue = document.getElementById("skyboxValue");
+      const skyToneControl = document.getElementById("skyToneControl");
+      const skyToneValue = document.getElementById("skyToneValue");
+      const cloudAmountControl = document.getElementById("cloudAmountControl");
+      const cloudAmountValue = document.getElementById("cloudAmountValue");
+      const windSpeedControl = document.getElementById("windSpeedControl");
+      const windSpeedValue = document.getElementById("windSpeedValue");
+      const resetCustomizer = document.getElementById("resetCustomizer");
+      const sceneToggle = document.getElementById("sceneToggle");
+      const qualityToggle = document.getElementById("qualityToggle");
       const ctx = canvas.getContext("2d", { alpha: false });
       const backgroundCanvas = document.createElement("canvas");
       const backgroundCtx = backgroundCanvas.getContext("2d");
@@ -43,7 +197,6 @@
       const GROUND_SAMPLE_SPACING = 8;
       const GROUND_CACHE_REFRESH_INTERVAL = 0.16;
       const GROUND_FOREGROUND_DEPTH = 0.24;
-      const DRAW_MARGIN = 96;
       const WIND_BAND_COUNT = 18;
       const WIND_BASE = 24;
       const WIND_SWAY = 42;
@@ -51,20 +204,150 @@
       const WIND_SHEAR = 24;
       const WIND_TURBULENCE = 24;
       const WIND_VERTICAL_ROLL = 20;
-      const PETAL_SHADE_PALETTES = [
-        {
-          sprite: { top: "#fffdf9", mid: "#ffe8ef", bottom: "#f8c9d8", glow: "rgba(255,255,255,0.7)" },
-          cluster: { top: "rgba(255,253,249,0.98)", bottom: "rgba(248,201,216,0.95)" }
+      const QUALITY_STORAGE_KEY = "cherry-blossom-quality";
+      const SCENE_STORAGE_KEY = "cherry-blossom-scene";
+      const CUSTOMIZER_STORAGE_KEY = "cherry-blossom-customizer";
+      const DEFAULT_CUSTOMIZER = {
+        skybox: "scene",
+        skyTone: 0,
+        cloudAmount: 100,
+        windSpeed: 100
+      };
+      const SKYBOXES = {
+        scene: {
+          label: "Scene"
         },
-        {
-          sprite: { top: "#fff6fb", mid: "#ffc9dc", bottom: "#ef97b8", glow: "rgba(255,230,241,0.68)" },
-          cluster: { top: "rgba(255,246,251,0.98)", bottom: "rgba(239,151,184,0.95)" }
+        midday: {
+          label: "Midday",
+          sky: ["#a8d9ff", "#8fc7f2", "#d8ecff"],
+          wash: ["rgba(255,255,255,0.16)", "rgba(110,174,225,0.08)"],
+          mountains: ["rgba(98, 132, 159, 0.22)", "rgba(116, 150, 173, 0.3)", "rgba(128, 164, 181, 0.32)"],
+          mist: ["rgba(226,242,255,0.12)", "rgba(198,225,244,0.22)", "rgba(171,206,227,0.4)"],
+          sun: true,
+          cloudTint: "cool"
         },
-        {
-          sprite: { top: "#fff1f7", mid: "#f6aecb", bottom: "#d9749f", glow: "rgba(255,214,232,0.64)" },
-          cluster: { top: "rgba(255,241,247,0.97)", bottom: "rgba(217,116,159,0.93)" }
+        sunset: {
+          label: "Sunset",
+          sky: ["#f7c891", "#df8c6b", "#8c6a8f"],
+          wash: ["rgba(255,185,91,0.24)", "rgba(168,72,80,0.12)"],
+          mountains: ["rgba(121, 81, 86, 0.28)", "rgba(148, 92, 88, 0.34)", "rgba(155, 109, 102, 0.36)"],
+          mist: ["rgba(238,178,133,0.14)", "rgba(190,119,113,0.25)", "rgba(112,84,106,0.45)"],
+          sun: true,
+          cloudTint: "warm"
+        },
+        night: {
+          label: "Night",
+          sky: ["#18233c", "#263255", "#51456f"],
+          wash: ["rgba(90,116,176,0.14)", "rgba(28,20,56,0.16)"],
+          mountains: ["rgba(38, 45, 75, 0.48)", "rgba(48, 54, 86, 0.46)", "rgba(58, 62, 92, 0.42)"],
+          mist: ["rgba(87,94,129,0.1)", "rgba(63,70,107,0.2)", "rgba(36,42,72,0.52)"],
+          sun: false,
+          cloudTint: "night"
+        },
+        overcast: {
+          label: "Overcast",
+          sky: ["#c9cdd1", "#b9bdc4", "#a7aeb8"],
+          wash: ["rgba(230,234,236,0.16)", "rgba(118,126,138,0.08)"],
+          mountains: ["rgba(92, 99, 109, 0.28)", "rgba(108, 115, 123, 0.34)", "rgba(122, 129, 135, 0.36)"],
+          mist: ["rgba(224,226,226,0.18)", "rgba(187,191,193,0.3)", "rgba(132,139,145,0.5)"],
+          sun: false,
+          cloudTint: "gray"
         }
-      ];
+      };
+      const QUALITY_PROFILES = {
+        full: {
+          label: "Full",
+          maxDpr: 1.35,
+          maxBackingPixels: 1800000,
+          particleMin: 850,
+          particleMax: 1500,
+          particleDensity: 1450,
+          groundPetalScale: 1,
+          groundCacheRefresh: 0.16,
+          fog: true,
+          fogScale: 1,
+          fogBlurScale: 1,
+          treeSlices: true,
+          treeSliceStep: 34,
+          frameInterval: 0,
+          warmupDuration: 4.2,
+          warmupRate: 20,
+          layerGroundChecks: true,
+          drawMargin: 96,
+          gustLimit: 6
+        },
+        light: {
+          label: "Light",
+          maxDpr: 1,
+          maxBackingPixels: 900000,
+          particleMin: 180,
+          particleMax: 380,
+          particleDensity: 5200,
+          groundPetalScale: 0.28,
+          groundCacheRefresh: 0.36,
+          fog: false,
+          fogScale: 0.45,
+          fogBlurScale: 0.55,
+          treeSlices: false,
+          treeSliceStep: 22,
+          frameInterval: 1 / 30,
+          warmupDuration: 1.6,
+          warmupRate: 14,
+          layerGroundChecks: false,
+          drawMargin: 72,
+          gustLimit: 4
+        }
+      };
+      const SCENES = {
+        sakura: {
+          label: "Sakura",
+          title: "Dreamy Cherry Blossom Storm",
+          bodyColor: "#d8bfd3",
+          sky: ["#e0c5d7", "#d0bddf", "#c5b9e4"],
+          wash: ["rgba(220,191,192,0.22)", "rgba(222,190,211,0.06)"],
+          mountains: ["rgba(128, 108, 154, 0.3)", "rgba(145, 126, 171, 0.36)", "rgba(150, 139, 174, 0.36)"],
+          mist: ["rgba(219,201,218,0.14)", "rgba(208,190,213,0.28)", "rgba(193,177,201,0.6)"],
+          ground: ["rgba(178,203,139,0.96)", "rgba(135,169,111,0.99)", "rgba(82,124,86,1)"],
+          petals: [
+            {
+              sprite: { top: "#fffdf9", mid: "#ffe8ef", bottom: "#f8c9d8", glow: "rgba(255,255,255,0.7)" },
+              cluster: { top: "rgba(255,253,249,0.98)", bottom: "rgba(248,201,216,0.95)", highlightTop: "rgba(255,255,250,0.98)", highlightBottom: "rgba(250,216,227,0.95)" }
+            },
+            {
+              sprite: { top: "#fff6fb", mid: "#ffc9dc", bottom: "#ef97b8", glow: "rgba(255,230,241,0.68)" },
+              cluster: { top: "rgba(255,246,251,0.98)", bottom: "rgba(239,151,184,0.95)", highlightTop: "rgba(255,255,250,0.98)", highlightBottom: "rgba(250,216,227,0.95)" }
+            },
+            {
+              sprite: { top: "#fff1f7", mid: "#f6aecb", bottom: "#d9749f", glow: "rgba(255,214,232,0.64)" },
+              cluster: { top: "rgba(255,241,247,0.97)", bottom: "rgba(217,116,159,0.93)", highlightTop: "rgba(255,255,250,0.98)", highlightBottom: "rgba(250,216,227,0.95)" }
+            }
+          ]
+        },
+        fall: {
+          label: "Fall",
+          title: "Windy Autumn Leaf Storm",
+          bodyColor: "#d9b58f",
+          sky: ["#e8cfa8", "#d7b58f", "#b98f78"],
+          wash: ["rgba(255,176,91,0.18)", "rgba(143,82,50,0.08)"],
+          mountains: ["rgba(122, 88, 65, 0.28)", "rgba(142, 94, 62, 0.33)", "rgba(150, 112, 80, 0.34)"],
+          mist: ["rgba(219,181,142,0.12)", "rgba(178,132,96,0.22)", "rgba(128,92,70,0.42)"],
+          ground: ["rgba(184,164,92,0.98)", "rgba(141,126,70,1)", "rgba(88,91,62,1)"],
+          petals: [
+            {
+              sprite: { top: "#ffe2a6", mid: "#e78132", bottom: "#a84523", glow: "rgba(255,196,112,0.55)" },
+              cluster: { top: "rgba(255,216,142,0.96)", bottom: "rgba(185,79,35,0.94)", highlightTop: "rgba(255,230,166,0.98)", highlightBottom: "rgba(214,119,45,0.95)" }
+            },
+            {
+              sprite: { top: "#ffd05e", mid: "#c65f22", bottom: "#7b2d1c", glow: "rgba(255,180,65,0.5)" },
+              cluster: { top: "rgba(255,202,94,0.96)", bottom: "rgba(130,48,29,0.94)", highlightTop: "rgba(255,221,132,0.98)", highlightBottom: "rgba(178,83,31,0.95)" }
+            },
+            {
+              sprite: { top: "#f2b04a", mid: "#9d4a2d", bottom: "#5e2e27", glow: "rgba(225,130,58,0.46)" },
+              cluster: { top: "rgba(230,151,64,0.95)", bottom: "rgba(95,49,38,0.93)", highlightTop: "rgba(250,188,88,0.98)", highlightBottom: "rgba(142,70,42,0.95)" }
+            }
+          ]
+        }
+      };
 
       let width = 0;
       let height = 0;
@@ -89,6 +372,13 @@
       let windBands = [];
       let nextGustAt = 0;
       let resizeFrame = 0;
+      let backgroundBuildFrame = 0;
+      const treeGenerationSeed = (Math.random() * 0xffffffff) >>> 0;
+      let customizer = loadCustomizer();
+      let sceneMode = chooseInitialSceneMode();
+      let activeScene = SCENES[sceneMode];
+      let qualityMode = chooseInitialQualityMode();
+      let quality = QUALITY_PROFILES[qualityMode];
       const pointer = {
         x: 0,
         y: 0,
@@ -147,6 +437,205 @@
         return min + rng() * (max - min);
       }
 
+      function loadCustomizer() {
+        const params = new URLSearchParams(window.location.search);
+        try {
+          const stored = JSON.parse(window.localStorage.getItem(CUSTOMIZER_STORAGE_KEY));
+          if (stored && typeof stored === "object") {
+            const storedSkybox = SKYBOXES[stored.skybox] ? stored.skybox : DEFAULT_CUSTOMIZER.skybox;
+            const loaded = {
+              skybox: storedSkybox,
+              skyTone: clamp(Number(stored.skyTone) || 0, -50, 50),
+              cloudAmount: clamp(Number(stored.cloudAmount) || 0, 0, 100),
+              windSpeed: clamp(Number(stored.windSpeed) || DEFAULT_CUSTOMIZER.windSpeed, 25, 220)
+            };
+            return applyCustomizerQueryOverrides(loaded, params);
+          }
+        } catch (error) {
+          // Storage can be blocked or contain stale data.
+        }
+
+        return applyCustomizerQueryOverrides({ ...DEFAULT_CUSTOMIZER }, params);
+      }
+
+      function applyCustomizerQueryOverrides(baseCustomizer, params) {
+        const requestedSkybox = params.get("skybox");
+        const requestedSkyTone = Number(params.get("skyTone"));
+        const requestedClouds = Number(params.get("clouds"));
+        const requestedWind = Number(params.get("wind"));
+        return {
+          ...baseCustomizer,
+          skybox: SKYBOXES[requestedSkybox] ? requestedSkybox : baseCustomizer.skybox,
+          skyTone: Number.isFinite(requestedSkyTone) ? clamp(requestedSkyTone, -50, 50) : baseCustomizer.skyTone,
+          cloudAmount: Number.isFinite(requestedClouds) ? clamp(requestedClouds, 0, 100) : baseCustomizer.cloudAmount,
+          windSpeed: Number.isFinite(requestedWind) ? clamp(requestedWind, 25, 220) : baseCustomizer.windSpeed
+        };
+      }
+
+      function saveCustomizer() {
+        try {
+          window.localStorage.setItem(CUSTOMIZER_STORAGE_KEY, JSON.stringify(customizer));
+        } catch (error) {
+          // Ignore storage failures; controls still apply for the current session.
+        }
+      }
+
+      function windMultiplier() {
+        return customizer.windSpeed / 100;
+      }
+
+      function cloudMultiplier() {
+        return customizer.cloudAmount / 100;
+      }
+
+      function activeSkybox() {
+        return SKYBOXES[customizer.skybox] || SKYBOXES.scene;
+      }
+
+      function skyboxValueFor(key) {
+        const skybox = activeSkybox();
+        return skybox[key] || activeScene[key];
+      }
+
+      function updateCustomizerControls() {
+        skyboxControl.value = customizer.skybox;
+        skyToneControl.value = customizer.skyTone;
+        cloudAmountControl.value = customizer.cloudAmount;
+        windSpeedControl.value = customizer.windSpeed;
+        skyboxValue.textContent = SKYBOXES[customizer.skybox].label;
+        skyToneValue.textContent = customizer.skyTone === 0 ? "Neutral" : `${customizer.skyTone > 0 ? "+" : ""}${customizer.skyTone}`;
+        cloudAmountValue.textContent = `${customizer.cloudAmount}%`;
+        windSpeedValue.textContent = `${customizer.windSpeed}%`;
+      }
+
+      function setCustomizerValue(key, value) {
+        const next = { ...customizer };
+        if (key === "skybox") {
+          next.skybox = SKYBOXES[value] ? value : DEFAULT_CUSTOMIZER.skybox;
+        } else if (key === "skyTone") {
+          next.skyTone = clamp(value, -50, 50);
+        } else if (key === "cloudAmount") {
+          next.cloudAmount = clamp(value, 0, 100);
+        } else if (key === "windSpeed") {
+          next.windSpeed = clamp(value, 25, 220);
+        }
+
+        customizer = next;
+        updateCustomizerControls();
+        saveCustomizer();
+
+        if ((key === "skybox" || key === "skyTone" || key === "cloudAmount") && width && height) {
+          requestBackgroundBuild();
+        }
+      }
+
+      function requestBackgroundBuild() {
+        if (backgroundBuildFrame) {
+          return;
+        }
+
+        backgroundBuildFrame = requestAnimationFrame(() => {
+          backgroundBuildFrame = 0;
+          buildBackground();
+        });
+      }
+
+      function chooseInitialQualityMode() {
+        const requestedMode = new URLSearchParams(window.location.search).get("quality");
+        if (requestedMode === "full" || requestedMode === "light") {
+          return requestedMode;
+        }
+
+        try {
+          const storedMode = window.localStorage.getItem(QUALITY_STORAGE_KEY);
+          if (storedMode === "full" || storedMode === "light") {
+            return storedMode;
+          }
+        } catch (error) {
+          // Storage can be blocked in embedded or private contexts.
+        }
+
+        return "light";
+      }
+
+      function chooseInitialSceneMode() {
+        const requestedMode = new URLSearchParams(window.location.search).get("scene");
+        if (SCENES[requestedMode]) {
+          return requestedMode;
+        }
+
+        try {
+          const storedMode = window.localStorage.getItem(SCENE_STORAGE_KEY);
+          if (SCENES[storedMode]) {
+            return storedMode;
+          }
+        } catch (error) {
+          // Storage can be blocked in embedded or private contexts.
+        }
+
+        return "sakura";
+      }
+
+      function updateSceneToggle() {
+        sceneToggle.textContent = `${activeScene.label} scene`;
+        sceneToggle.title = `Switch to ${sceneMode === "sakura" ? "Fall" : "Sakura"} scene`;
+        document.title = activeScene.title;
+        document.body.style.background = activeScene.bodyColor;
+      }
+
+      function setSceneMode(nextMode) {
+        if (!SCENES[nextMode] || nextMode === sceneMode) {
+          return;
+        }
+
+        sceneMode = nextMode;
+        activeScene = SCENES[sceneMode];
+        updateSceneToggle();
+
+        try {
+          window.localStorage.setItem(SCENE_STORAGE_KEY, sceneMode);
+        } catch (error) {
+          // Ignore storage failures; the current session still switches scenes.
+        }
+
+        petalSprites = createPetalSprites();
+        if (width && height) {
+          buildBackground();
+          buildTree();
+          seedGroundPetals();
+          groundCacheReady = false;
+          markGroundCacheDirty();
+        }
+      }
+
+      function updateQualityToggle() {
+        qualityToggle.textContent = `${quality.label} mode`;
+        qualityToggle.setAttribute("aria-pressed", qualityMode === "light" ? "true" : "false");
+        qualityToggle.title = qualityMode === "light" ?
+          "Light mode: fewer particles and simpler effects" :
+          "Full mode: richer particles, fog, and tree motion";
+      }
+
+      function setQualityMode(nextMode) {
+        if (!QUALITY_PROFILES[nextMode] || nextMode === qualityMode) {
+          return;
+        }
+
+        qualityMode = nextMode;
+        quality = QUALITY_PROFILES[qualityMode];
+        updateQualityToggle();
+
+        try {
+          window.localStorage.setItem(QUALITY_STORAGE_KEY, qualityMode);
+        } catch (error) {
+          // Ignore storage failures; the current session still switches modes.
+        }
+
+        if (width && height) {
+          requestResize();
+        }
+      }
+
       function setupLayer(targetCanvas, targetCtx) {
         targetCanvas.width = Math.max(1, Math.floor(width * dpr));
         targetCanvas.height = Math.max(1, Math.floor(height * dpr));
@@ -155,9 +644,9 @@
       }
 
       function chooseDevicePixelRatio() {
-        const rawDpr = Math.min(window.devicePixelRatio || 1, MAX_DEVICE_PIXEL_RATIO);
+        const rawDpr = Math.min(window.devicePixelRatio || 1, Math.min(MAX_DEVICE_PIXEL_RATIO, quality.maxDpr));
         const cssPixels = Math.max(1, width * height);
-        const pixelCappedDpr = Math.sqrt(MAX_BACKING_PIXELS / cssPixels);
+        const pixelCappedDpr = Math.sqrt(Math.min(MAX_BACKING_PIXELS, quality.maxBackingPixels) / cssPixels);
         return Math.max(1, Math.min(rawDpr, pixelCappedDpr));
       }
 
@@ -257,11 +746,13 @@
           windBands = new Array(WIND_BAND_COUNT);
         }
 
+        const windScale = windMultiplier();
         for (let i = 0; i < WIND_BAND_COUNT; i += 1) {
           const t = i / (WIND_BAND_COUNT - 1);
-          windBands[i] =
+          windBands[i] = (
             Math.sin(time * 0.82 + t * Math.PI * 3.4) * WIND_VERTICAL_ROLL +
-            Math.sin(time * 1.35 + t * Math.PI * 6.2 + 0.8) * WIND_VERTICAL_ROLL * 0.38;
+            Math.sin(time * 1.35 + t * Math.PI * 6.2 + 0.8) * WIND_VERTICAL_ROLL * 0.38
+          ) * windScale;
         }
       }
 
@@ -273,7 +764,7 @@
       }
 
       function createPetalSprites() {
-        return PETAL_SHADE_PALETTES.map((paletteSet, index) => {
+        return activeScene.petals.map((paletteSet, index) => {
           const palette = paletteSet.sprite;
           const sprite = document.createElement("canvas");
           sprite.width = 64;
@@ -392,6 +883,12 @@
       }
 
       function drawCloudVeils(targetCtx) {
+        const cloudAlpha = cloudMultiplier();
+        if (cloudAlpha <= 0) {
+          return;
+        }
+
+        const tint = activeSkybox().cloudTint || "scene";
         const layers = [
           { y: 0.18, scale: 0.72, alpha: 0.1, drift: -0.04, seed: 31 },
           { y: 0.34, scale: 0.92, alpha: 0.075, drift: 0.08, seed: 73 },
@@ -408,7 +905,13 @@
           const bandHeight = height * 0.08 * layer.scale;
           const gradient = targetCtx.createLinearGradient(0, bandY - bandHeight, 0, bandY + bandHeight);
           gradient.addColorStop(0, "rgba(255,255,255,0)");
-          gradient.addColorStop(0.5, `rgba(255,246,251,${layer.alpha})`);
+          const cloudColor =
+            tint === "night" ? "rgba(173,184,222,ALPHA)" :
+            tint === "gray" ? "rgba(238,240,240,ALPHA)" :
+            tint === "cool" ? "rgba(245,250,255,ALPHA)" :
+            tint === "warm" ? "rgba(255,232,205,ALPHA)" :
+            "rgba(255,246,251,ALPHA)";
+          gradient.addColorStop(0.5, cloudColor.replace("ALPHA", (layer.alpha * cloudAlpha).toFixed(3)));
           gradient.addColorStop(1, "rgba(255,255,255,0)");
 
           targetCtx.fillStyle = gradient;
@@ -435,8 +938,8 @@
 
           const streak = targetCtx.createLinearGradient(width * layer.drift, bandY, width * (1 + layer.drift), bandY);
           streak.addColorStop(0, "rgba(255,255,255,0)");
-          streak.addColorStop(0.45, `rgba(255,234,244,${layer.alpha * 0.28})`);
-          streak.addColorStop(0.56, `rgba(244,225,244,${layer.alpha * 0.48})`);
+          streak.addColorStop(0.45, cloudColor.replace("ALPHA", (layer.alpha * 0.28 * cloudAlpha).toFixed(3)));
+          streak.addColorStop(0.56, cloudColor.replace("ALPHA", (layer.alpha * 0.48 * cloudAlpha).toFixed(3)));
           streak.addColorStop(1, "rgba(255,255,255,0)");
           targetCtx.fillStyle = streak;
           targetCtx.fillRect(0, bandY - bandHeight * 0.45, width, bandHeight * 0.9);
@@ -623,42 +1126,65 @@
 
       function buildBackground() {
         setupLayer(backgroundCanvas, backgroundCtx);
+        const skyColors = skyboxValueFor("sky");
+        const washColors = skyboxValueFor("wash");
+        const mountainColors = skyboxValueFor("mountains");
+        const mistColors = skyboxValueFor("mist");
+        const skybox = activeSkybox();
 
         const sky = backgroundCtx.createLinearGradient(0, 0, 0, height);
-        sky.addColorStop(0, "#e0c5d7");
-        sky.addColorStop(0.48, "#d0bddf");
-        sky.addColorStop(1, "#c5b9e4");
+        sky.addColorStop(0, skyColors[0]);
+        sky.addColorStop(0.48, skyColors[1]);
+        sky.addColorStop(1, skyColors[2]);
         backgroundCtx.fillStyle = sky;
         backgroundCtx.fillRect(0, 0, width, height);
 
+        if (customizer.skyTone !== 0) {
+          const toneStrength = Math.abs(customizer.skyTone) / 50;
+          const tone = backgroundCtx.createLinearGradient(0, 0, width, height);
+          if (customizer.skyTone > 0) {
+            tone.addColorStop(0, `rgba(255,205,128,${0.2 * toneStrength})`);
+            tone.addColorStop(0.55, `rgba(236,122,84,${0.1 * toneStrength})`);
+            tone.addColorStop(1, `rgba(137,80,56,${0.08 * toneStrength})`);
+          } else {
+            tone.addColorStop(0, `rgba(167,213,255,${0.22 * toneStrength})`);
+            tone.addColorStop(0.55, `rgba(114,158,220,${0.12 * toneStrength})`);
+            tone.addColorStop(1, `rgba(75,98,158,${0.08 * toneStrength})`);
+          }
+          backgroundCtx.fillStyle = tone;
+          backgroundCtx.fillRect(0, 0, width, height);
+        }
+
         const wash = backgroundCtx.createLinearGradient(width, 0, 0, height);
-        wash.addColorStop(0, "rgba(220,191,192,0.22)");
-        wash.addColorStop(0.45, "rgba(222,190,211,0.06)");
+        wash.addColorStop(0, washColors[0]);
+        wash.addColorStop(0.45, washColors[1]);
         wash.addColorStop(1, "rgba(255,255,255,0)");
         backgroundCtx.fillStyle = wash;
         backgroundCtx.fillRect(0, 0, width, height);
 
         drawCloudVeils(backgroundCtx);
-        drawSunlight(backgroundCtx);
+        if (skybox.sun !== false) {
+          drawSunlight(backgroundCtx);
+        }
 
         drawMountainLayer(backgroundCtx, {
           baseY: height * 0.66,
           amplitude: height * 0.12,
-          color: "rgba(128, 108, 154, 0.3)",
+          color: mountainColors[0],
           blur: 18,
           seed: 11
         });
         drawMountainLayer(backgroundCtx, {
           baseY: height * 0.72,
           amplitude: height * 0.09,
-          color: "rgba(145, 126, 171, 0.36)",
+          color: mountainColors[1],
           blur: 10,
           seed: 27
         });
         drawMountainLayer(backgroundCtx, {
           baseY: height * 0.77,
           amplitude: height * 0.06,
-          color: "rgba(150, 139, 174, 0.36)",
+          color: mountainColors[2],
           blur: 4,
           seed: 43
         });
@@ -666,9 +1192,9 @@
 
         const mist = backgroundCtx.createLinearGradient(0, height * 0.46, 0, height);
         mist.addColorStop(0, "rgba(255,255,255,0)");
-        mist.addColorStop(0.35, "rgba(219,201,218,0.14)");
-        mist.addColorStop(0.7, "rgba(208,190,213,0.28)");
-        mist.addColorStop(1, "rgba(193,177,201,0.6)");
+        mist.addColorStop(0.35, mistColors[0]);
+        mist.addColorStop(0.7, mistColors[1]);
+        mist.addColorStop(1, mistColors[2]);
         backgroundCtx.fillStyle = mist;
         backgroundCtx.fillRect(0, height * 0.46, width, height * 0.54);
 
@@ -688,9 +1214,9 @@
         drawAtmosphericTexture(backgroundCtx);
 
         const groundGradient = backgroundCtx.createLinearGradient(0, height * 0.78, 0, height);
-        groundGradient.addColorStop(0, "rgba(178,203,139,0.96)");
-        groundGradient.addColorStop(0.46, "rgba(135,169,111,0.99)");
-        groundGradient.addColorStop(1, "rgba(82,124,86,1)");
+        groundGradient.addColorStop(0, activeScene.ground[0]);
+        groundGradient.addColorStop(0.46, activeScene.ground[1]);
+        groundGradient.addColorStop(1, activeScene.ground[2]);
         backgroundCtx.fillStyle = groundGradient;
         traceGroundPath(backgroundCtx);
         backgroundCtx.fill();
@@ -862,7 +1388,7 @@
           const py = Math.sin(angle) * distance * 0.78;
           const size = seededBetween(rng, 3.1, 6.9);
           const rotation = seededBetween(rng, -Math.PI, Math.PI);
-          const shade = PETAL_SHADE_PALETTES[(rng() * PETAL_SHADE_PALETTES.length) | 0].cluster;
+          const shade = activeScene.petals[(rng() * activeScene.petals.length) | 0].cluster;
           const highlight = rng() < 0.22;
 
           targetCtx.save();
@@ -870,8 +1396,8 @@
           targetCtx.rotate(rotation);
 
           const petalGradient = targetCtx.createLinearGradient(0, -size, 0, size);
-          petalGradient.addColorStop(0, highlight ? "rgba(255,255,250,0.98)" : shade.top);
-          petalGradient.addColorStop(1, highlight ? "rgba(250,216,227,0.95)" : shade.bottom);
+          petalGradient.addColorStop(0, highlight ? shade.highlightTop : shade.top);
+          petalGradient.addColorStop(1, highlight ? shade.highlightBottom : shade.bottom);
           targetCtx.fillStyle = petalGradient;
 
           targetCtx.beginPath();
@@ -1028,7 +1554,7 @@
         blossomClusters = [];
         spawnPoints = [];
 
-        const seed = ((width * 73856093) ^ (height * 19349663) ^ 0x9e3779b9) >>> 0;
+        const seed = ((width * 73856093) ^ (height * 19349663) ^ treeGenerationSeed ^ 0x9e3779b9) >>> 0;
         const rng = mulberry32(seed);
         const baseY = groundYAt(treeBaseX) + height * 0.012;
         const trunkLength = height * (width < 700 ? 0.15 : 0.17);
@@ -1082,7 +1608,7 @@
       }
 
       function groundPetalLimit() {
-        return Math.max(260, Math.min(720, Math.floor(width * 0.45)));
+        return Math.floor(Math.max(160, Math.min(720, Math.floor(width * 0.45))) * quality.groundPetalScale);
       }
 
       function markGroundCacheDirty() {
@@ -1107,7 +1633,7 @@
 
       function seedGroundPetals() {
         groundPetals = [];
-        const count = Math.max(180, Math.min(520, Math.floor(width * 0.32)));
+        const count = Math.floor(Math.max(120, Math.min(520, Math.floor(width * 0.32))) * quality.groundPetalScale);
 
         for (let i = 0; i < count; i += 1) {
           let x = treeBaseX + (Math.random() - 0.15) * width * randomBetween(0.2, 0.38);
@@ -1182,7 +1708,10 @@
       }
 
       function rebuildParticles() {
-        const targetCount = Math.min(1500, Math.max(850, Math.floor((width * height) / 1450)));
+        const targetCount = Math.min(
+          quality.particleMax,
+          Math.max(quality.particleMin, Math.floor((width * height) / quality.particleDensity))
+        );
         petals = new Array(targetCount);
         petalLayers = [[], []];
 
@@ -1197,8 +1726,8 @@
         scheduleNextGust(sceneTime);
       }
 
-      function warmupScene(duration = 4.2) {
-        const step = 1 / 20;
+      function warmupScene(duration = quality.warmupDuration) {
+        const step = 1 / quality.warmupRate;
         const steps = Math.ceil(duration / step);
 
         for (let i = 0; i < steps; i += 1) {
@@ -1428,6 +1957,7 @@
       function spawnGust() {
         const radius = randomBetween(120, 300);
         const entersFromEdge = Math.random() < 0.58;
+        const windScale = windMultiplier();
 
         gusts.push({
           x: entersFromEdge ? -radius * randomBetween(0.2, 0.85) : randomBetween(width * 0.2, width * 0.84),
@@ -1435,16 +1965,16 @@
           radius,
           radiusSquared: radius * radius,
           invRadius: 1 / radius,
-          strength: randomBetween(170, 320),
+          strength: randomBetween(170, 320) * windScale,
           spin: Math.random() < 0.5 ? -1 : 1,
           age: 0,
           duration: randomBetween(4.2, 8.2),
-          driftX: randomBetween(18, 48),
-          driftY: randomBetween(-9, 12),
-          upLift: randomBetween(38, 90)
+          driftX: randomBetween(18, 48) * windScale,
+          driftY: randomBetween(-9, 12) * windScale,
+          upLift: randomBetween(38, 90) * windScale
         });
 
-        if (gusts.length > 6) {
+        if (gusts.length > quality.gustLimit) {
           gusts.shift();
         }
       }
@@ -1479,11 +2009,13 @@
       }
 
       function updatePetals(dt, time) {
-        const globalWind =
+        const windScale = windMultiplier();
+        const globalWind = (
           Math.sin(time * 0.15) * WIND_SWAY +
           Math.sin(time * 0.37 + 1.1) * WIND_RIPPLE +
           Math.max(0, Math.sin(time * 0.53 - 0.8)) * WIND_RIPPLE +
-          WIND_BASE;
+          WIND_BASE
+        ) * windScale;
         const curveTime = time * 0.55;
         const petalCount = petals.length;
         const gustCount = gusts.length;
@@ -1506,7 +2038,7 @@
           } else if (heightRatio > 1) {
             heightRatio = 1;
           }
-          const windShear = (1 - heightRatio) * WIND_SHEAR;
+          const windShear = (1 - heightRatio) * WIND_SHEAR * windScale;
           const rollingWind = windBandAt(heightRatio);
           const turbulence = Math.sin(time * petal.turbulenceSpeed + petal.turbulencePhase + petal.y * 0.018) *
             petal.turbulenceAmp;
@@ -1548,9 +2080,9 @@
 
           const outsideX = petal.x < -120 || petal.x > width + 120;
           const outsideTop = petal.y < -80;
-          const layerCheckX = clamp(petal.x, 0, width);
-          const layerGroundY = groundYAt(layerCheckX);
-          if (petal.groundDepth >= GROUND_FOREGROUND_DEPTH || petal.y > layerGroundY - height * 0.2) {
+          const shouldCheckGroundLayer = quality.layerGroundChecks && petal.y > height * 0.5;
+          const nearGroundLayer = shouldCheckGroundLayer && petal.y > groundYAt(clamp(petal.x, 0, width)) - height * 0.2;
+          if (petal.groundDepth >= GROUND_FOREGROUND_DEPTH || nearGroundLayer) {
             setPetalLayer(petal, 1);
           }
           let shouldReset = outsideX || outsideTop;
@@ -1583,10 +2115,10 @@
         for (let i = 0; i < layerPetals.length; i += 1) {
           const petal = layerPetals[i];
           if (
-            petal.x < -DRAW_MARGIN ||
-            petal.x > width + DRAW_MARGIN ||
-            petal.y < -DRAW_MARGIN ||
-            petal.y > height + DRAW_MARGIN
+            petal.x < -quality.drawMargin ||
+            petal.x > width + quality.drawMargin ||
+            petal.y < -quality.drawMargin ||
+            petal.y > height + quality.drawMargin
           ) {
             continue;
           }
@@ -1645,10 +2177,10 @@
         for (let i = 0; i < groundPetals.length; i += 1) {
           const petal = groundPetals[i];
           if (
-            petal.x < -DRAW_MARGIN ||
-            petal.x > width + DRAW_MARGIN ||
-            petal.y < -DRAW_MARGIN ||
-            petal.y > height + DRAW_MARGIN
+            petal.x < -quality.drawMargin ||
+            petal.x > width + quality.drawMargin ||
+            petal.y < -quality.drawMargin ||
+            petal.y > height + quality.drawMargin
           ) {
             continue;
           }
@@ -1663,7 +2195,7 @@
         groundCtx.globalAlpha = 1;
         groundCacheDirty = false;
         groundCacheReady = true;
-        nextGroundCacheRefresh = time + GROUND_CACHE_REFRESH_INTERVAL;
+        nextGroundCacheRefresh = time + Math.max(GROUND_CACHE_REFRESH_INTERVAL, quality.groundCacheRefresh);
       }
 
       function drawGroundPetals(time) {
@@ -1729,6 +2261,11 @@
       }
 
       function drawMovingFogLayer(time, options) {
+        const cloudAlpha = cloudMultiplier();
+        if (cloudAlpha <= 0) {
+          return;
+        }
+
         const {
           baseY,
           heightSpan,
@@ -1743,17 +2280,18 @@
         } = options;
         const rng = mulberry32(seed);
         const safeWidth = Math.max(width, 1);
-        const stride = safeWidth / Math.max(1, count - 1);
+        const scaledCount = Math.max(2, Math.ceil(count * quality.fogScale));
+        const stride = safeWidth / Math.max(1, scaledCount - 1);
         const travel = safeWidth + stride * 2;
         const offset = ((time * speed) % travel + travel) % travel;
         const verticalBreathe = Math.sin(time * (0.06 + depth * 0.05) + seed) * height * 0.006 * depth;
 
         ctx.save();
         ctx.globalCompositeOperation = "screen";
-        ctx.filter = blur ? `blur(${blur}px)` : "none";
+        ctx.filter = blur ? `blur(${blur * quality.fogBlurScale}px)` : "none";
         ctx.globalAlpha = 1;
 
-        for (let i = 0; i < count + 2; i += 1) {
+        for (let i = 0; i < scaledCount + 2; i += 1) {
           const jitter = seededBetween(rng, -stride * 0.36, stride * 0.36);
           const x = ((i * stride + jitter + offset) % travel) - stride;
           const y =
@@ -1763,7 +2301,7 @@
             verticalBreathe;
           const radiusX = seededBetween(rng, width * 0.06, width * 0.16) * puffScale;
           const radiusY = seededBetween(rng, height * 0.018, height * 0.055) * puffScale;
-          const puffAlpha = alpha * seededBetween(rng, 0.62, 1.05);
+          const puffAlpha = alpha * cloudAlpha * seededBetween(rng, 0.62, 1.05);
 
           drawFogPuff(x, y, radiusX, radiusY, puffAlpha, color);
         }
@@ -1772,6 +2310,10 @@
       }
 
       function drawMovingFog(time, stage) {
+        if (!quality.fog || cloudMultiplier() <= 0) {
+          return;
+        }
+
         if (stage === "sky") {
           drawMovingFogLayer(time, {
             baseY: 0.24,
@@ -1857,10 +2399,15 @@
       }
 
       function drawWindSlicedTree(time, motion) {
+        if (!quality.treeSlices) {
+          ctx.drawImage(treeCanvas, 0, 0, width, height);
+          return;
+        }
+
         const pivotX = treeBaseX;
         const pivotY = groundYAt(treeBaseX) + height * 0.012;
         const wind = treeWindAt(time);
-        const sliceHeight = Math.max(18, Math.floor(height / 34));
+        const sliceHeight = Math.max(18, Math.floor(height / quality.treeSliceStep));
         const trunkAnchor = height * 0.68;
         const canopyBottom = Math.max(0, pivotY - height * 0.04);
 
@@ -1968,7 +2515,12 @@
 
       function frame(now) {
         const clockTime = now * 0.001;
-        const dt = Math.min(0.033, lastTime ? clockTime - lastTime : 0.016);
+        if (lastTime && quality.frameInterval && clockTime - lastTime < quality.frameInterval) {
+          requestAnimationFrame(frame);
+          return;
+        }
+
+        const dt = Math.min(0.05, lastTime ? clockTime - lastTime : 0.016);
         lastTime = clockTime;
         sceneTime += dt;
 
@@ -2031,6 +2583,41 @@
       });
 
       window.addEventListener("resize", requestResize, { passive: true });
+      customizerToggle.addEventListener("click", () => {
+        const isOpen = customizerPanel.hidden;
+        customizerPanel.hidden = !isOpen;
+        customizerToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      });
+      skyboxControl.addEventListener("change", (event) => {
+        setCustomizerValue("skybox", event.target.value);
+      });
+      skyToneControl.addEventListener("input", (event) => {
+        setCustomizerValue("skyTone", Number(event.target.value));
+      });
+      cloudAmountControl.addEventListener("input", (event) => {
+        setCustomizerValue("cloudAmount", Number(event.target.value));
+      });
+      windSpeedControl.addEventListener("input", (event) => {
+        setCustomizerValue("windSpeed", Number(event.target.value));
+      });
+      resetCustomizer.addEventListener("click", () => {
+        customizer = { ...DEFAULT_CUSTOMIZER };
+        updateCustomizerControls();
+        saveCustomizer();
+        if (width && height) {
+          requestBackgroundBuild();
+        }
+      });
+      qualityToggle.addEventListener("click", () => {
+        setQualityMode(qualityMode === "light" ? "full" : "light");
+      });
+      sceneToggle.addEventListener("click", () => {
+        setSceneMode(sceneMode === "sakura" ? "fall" : "sakura");
+      });
+
+      updateSceneToggle();
+      updateQualityToggle();
+      updateCustomizerControls();
       petalSprites = createPetalSprites();
       resize();
       requestAnimationFrame(frame);
